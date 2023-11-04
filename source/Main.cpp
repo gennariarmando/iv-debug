@@ -381,6 +381,8 @@ public:
         e = DebugMenuAddInt8("Player", "Invincible", (int8_t*)&godMode, nullptr, 1, 0, 1, boolstr);
         DebugMenuEntrySetWrap(e, true);
         DebugMenuAddCmd("Player", "Clear Wanted Level", []() { FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.m_nWantedLevel = 0; });
+        DebugMenuAddCmd("Player", "Give Money", []() { FindPlayerPed(0)->m_pPlayerInfo->m_nMoney += 10000; });
+        DebugMenuAddCmd("Player", "Remove Money", []() { FindPlayerPed(0)->m_pPlayerInfo->m_nMoney -= 10000; });
 
         // Debug
         e = DebugMenuAddCmd("Debug|Camera", "Toggle Debug Camera", []() {
