@@ -4,7 +4,7 @@ Adds debug entries for [iv-debugmenu](https://github.com/gennariarmando/iv-debug
 Only for GTA IV The Complete Edition
 
 # Download
-Grab [latest](https://github.com/gennariarmando/iv-debug/releases) 
+Download the latest archive from the [releases](https://github.com/gennariarmando/iv-debug/releases) page. \
 The file "debugmenu.dll" must be in the root of your GTA IV directory, "IVDebug.asi" can be either in root or "plugins" folder.
 
 # Screenshots
