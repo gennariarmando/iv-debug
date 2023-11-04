@@ -29,6 +29,7 @@ void (*DebugMenuProcess)();
 void (*DebugMenuRender)();
 void (*DebugMenuShutdown)();
 bool (*DebugMenuShowing)();
+void (*DebugMenuClear)();
 void (*DebugMenuPrintString)(const char* str, float x, float y, int style);
 int (*DebugMenuGetStringSize)(const char* str);
 
@@ -39,6 +40,7 @@ public:
     static inline bool godMode = false;
     static inline int32_t controlMode = 0;
     static inline rage::Vector4 teleportPos = {};
+    static inline bool playerCoords = false;
 
     static void CallCheat(int32_t i) {
         static int32_t pattern = plugin::GetPattern("B3 01 EB 02 32 DB E8 ? ? ? ? 84 C0 0F 85", 1);
@@ -158,6 +160,8 @@ public:
         LoadCam(cam);
     }
 
+    static inline std::vector<std::string> vehicleNamesStrings = {};
+    static inline std::vector<char*> vehicleNames;
     static void AddEntries() {
         // Time & Weather
         DebugMenuAddInt32("Time & Weather", "Current Hour", &CClock::ms_nGameClockHours, nullptr, 1, 0, 23, nullptr);
@@ -182,196 +186,9 @@ public:
         DebugMenuAddFloat32("Time & Weather", "Time scale", &CTimer::ms_fTimeScale, nullptr, 0.1f, 0.0f, 10.0f);
 
         // Spawn
-        static const char* vehicleNames[] = {
-                "admiral",
-                "airtug",
-                "ambulance",
-                "banshee",
-                "benson",
-                "biff",
-                "blista",
-                "bobcat",
-                "boxville",
-                "buccaneer",
-                "burrito",
-                "burrito2",
-                "bus",
-                "cabby",
-                "cavalcade",
-                "chavos",
-                "cognoscenti",
-                "comet",
-                "coquette",
-                "df8",
-                "dilettante",
-                "dukes",
-                "e109",
-                "emperor",
-                "emperor2",
-                "esperanto",
-                "faction",
-                "fbi",
-                "feltzer",
-                "feroci",
-                "feroci2",
-                "firetruk",
-                "flatbed",
-                "fortune",
-                "forklift",
-                "futo",
-                "fxt",
-                "habanero",
-                "hakumai",
-                "huntley",
-                "infernus",
-                "ingot",
-                "intruder",
-                "landstalker",
-                "lokus",
-                "manana",
-                "marbella",
-                "merit",
-                "minivan",
-                "moonbeam",
-                "mrtasty",
-                "mule",
-                "noose",
-                "nstockade",
-                "oracle",
-                "packer",
-                "patriot",
-                "perennial",
-                "perennial2",
-                "peyote",
-                "phantom",
-                "pinnacle",
-                "pmp600",
-                "police",
-                "police2",
-                "polpatriot",
-                "pony",
-                "premier",
-                "pres",
-                "primo",
-                "pstockade",
-                "rancher",
-                "rebla",
-                "ripley",
-                "romero",
-                "rom",
-                "ruiner",
-                "sabre",
-                "sabre2",
-                "sabregt",
-                "schafter",
-                "sentinel",
-                "solair",
-                "speedo",
-                "stalion",
-                "steed",
-                "stockade",
-                "stratum",
-                "stretch",
-                "sultan",
-                "sultanrs",
-                "supergt",
-                "taxi",
-                "taxi2",
-                "trash",
-                "turismo",
-                "uranus",
-                "vigero",
-                "vigero2",
-                "vincent",
-                "virgo",
-                "voodoo",
-                "washington",
-                "willard",
-                "yankee",
-                "bobber",
-                "faggio",
-                "hellfury",
-                "nrg900",
-                "pcj",
-                "sanchez",
-                "zombieb",
-                "annihilator",
-                "maverick",
-                "polmav",
-                "tourmav",
-                "dinghy",
-                "jetmax",
-                "marquis",
-                "predator",
-                "reefer",
-                "squalo",
-                "tuga",
-                "tropic",
-                "cablecar",
-                "subway_lo",
-                "subway_hi",
-                "gburrito",
-                "slamvan",
-                "towtruck",
-                "packer2",
-                "pbus",
-                "yankee2",
-                "rhapsody",
-                "regina",
-                "tampa",
-                "angel",
-                "bati",
-                "bati2",
-                "daemon",
-                "diabolus",
-                "double",
-                "double2",
-                "hakuchou",
-                "hakuchou2",
-                "hexer",
-                "innovation",
-                "lycan",
-                "nightblade",
-                "revenant",
-                "wayfarer",
-                "wolfsbane",
-                "slamvan",
-                "caddy",
-                "apc",
-                "superd",
-                "superd2",
-                "serrano",
-                "serrano2",
-                "buffalo",
-                "avan",
-                "schafter2",
-                "schafter3",
-                "bullet",
-                "tampa",
-                "cavalcade2",
-                "f620",
-                "limo2",
-                "police3",
-                "policew",
-                "police4",
-                "policeb",
-                "hexer",
-                "faggio2",
-                "bati2",
-                "vader",
-                "akuma",
-                "hakuchou",
-                "double",
-                "buzzard",
-                "swift",
-                "skylift",
-                "smuggler",
-                "floater",
-                "blade",
-        };
-
         static int32_t vehId = 0;
-        DebugMenuAddInt32("Spawn", "Spawn Vehicle ID", &vehId, nullptr, 1, 0, plugin::array_size(vehicleNames) - 1, vehicleNames);
+        auto e = DebugMenuAddInt32("Spawn", "Spawn Vehicle ID", &vehId, nullptr, 1, 0, vehicleNames.size() - 1, (const char**)vehicleNames.data());
+        DebugMenuEntrySetWrap(e, true);
         DebugMenuAddCmd("Spawn", "Spawn Vehicle", []() {
             uint32_t index = 0;
             CModelInfo::GetModelByHash(rage::GetHashKey(vehicleNames[vehId], 0), &index);
@@ -440,9 +257,10 @@ public:
             CallCheat(CHEAT_WEAPONS_2);
         });
 
-        DebugMenuAddCmd("Cheats|Player", "Weapons 3 (TBOGT)", []() {
-            CallCheat(CHEAT_WEAPONS_3);
-        });
+        if (gGameEpisode == EPISODE_TBOGT)
+            DebugMenuAddCmd("Cheats|Player", "Weapons 3 (TBOGT)", []() {
+                CallCheat(CHEAT_WEAPONS_3);
+            });
 
         DebugMenuAddCmd("Cheats|Player", "Health Armour Ammo", []() {
             CallCheat(CHEAT_HEALTH_ARMOUR_AMMO);
@@ -560,11 +378,12 @@ public:
 
         // Player
         static const char* boolstr[] = { "Off", "On" };
-        DebugMenuAddInt8("Player", "Invincible", (int8_t*)&godMode, nullptr, 1, 0, 1, boolstr);
+        e = DebugMenuAddInt8("Player", "Invincible", (int8_t*)&godMode, nullptr, 1, 0, 1, boolstr);
+        DebugMenuEntrySetWrap(e, true);
         DebugMenuAddCmd("Player", "Clear Wanted Level", []() { FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.m_nWantedLevel = 0; });
 
         // Debug
-        auto e = DebugMenuAddCmd("Debug|Camera", "Toggle Debug Camera", []() {
+        e = DebugMenuAddCmd("Debug|Camera", "Toggle Debug Camera", []() {
             ToggleDebugCam();
         });
         DebugMenuEntrySetWrap(e, true);
@@ -581,6 +400,7 @@ public:
         DebugMenuAddCmd("Debug", "Delete Camera Positions", DeleteSavedCams);
 
         DebugMenuAddVarBool8("Debug", "Disable HUD", &CHud::HideAllComponents, nullptr);
+        DebugMenuAddVarBool8("Debug", "Show Player Coords", &playerCoords, nullptr);
 
         // Misc
         DebugMenuAddCmd("Misc", "Teleport to Waypoint", []() {
@@ -641,6 +461,7 @@ public:
         if (!cam)
             return;
 
+        LoadSavedCams();
         debugCamera ^= 1;
         cam->m_bActive = !debugCamera;
         ToggleControls(debugCamera && controlMode == 0);
@@ -666,16 +487,17 @@ public:
 
         ToggleControls(controlMode == 0);
 
+        bool controlsEnabled = !DebugMenuShowing();
         bool forward = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_W, 2, 0);
         bool backward = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_S, 2, 0);
         bool left = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_A, 2, 0);
         bool right = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_D, 2, 0);
-        bool shift = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_LSHIFT, 2, 0);
-        bool control = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_LCONTROL, 2, 0);
+        bool control = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_LCONTROL, 2, 0) || CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_RCONTROL, 2, 0);
         bool enter = CPad::KeyboardMgr.IsKeyJustPressed(eKeyCodes::KEY_RETURN, 2, 0);
+        bool up = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_UP, 2, 0);
+        bool down = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_DOWN, 2, 0);
         bool lmb = CPad::IsMouseButtonPressed(1);
         int32_t mouseX = 0, mouseY = 0;
-
         CPad::GetMouseInput(&mouseX, &mouseY);
 
         auto cam = TheCamera.m_pCamGame;
@@ -685,31 +507,70 @@ public:
         rage::Matrix44 mat = cam->m_mMatrix;
         rage::Vector3 rot = cam->m_mMatrix.GetRotation();
 
-        float moveSpeed = 10.0f * CTimer::GetTimeStep();
-        float rotationSpeed = 0.1f * CTimer::GetTimeStep();
+        static float speed = 0.0f;
+        static float panspeedX = 0.0f;
+        static float panspeedY = 0.0f;
 
-        if (shift)
-            moveSpeed = 70.0f * CTimer::GetTimeStep();
-        else if (control)
-            moveSpeed = 1.0f * CTimer::GetTimeStep();
+        float rotationSpeed = 0.0005f;
 
         rage::Vector3 angle = cam->m_mMatrix.GetRotation();
 
-        if (lmb) {
-            angle.z -= mouseX * rotationSpeed;
-            angle.x -= mouseY * rotationSpeed;
+        if (controlsEnabled) {
+            if (lmb) {
+                angle.z -= mouseX * rotationSpeed;
+                angle.x -= mouseY * rotationSpeed;
+            }
+
+            if (forward)
+                speed += 0.01f;
+            else if (backward)
+                speed -= 0.01f;
+            else
+                speed = 0.0f;
+
+            if (left)
+                panspeedX -= 0.01f;
+            else if (right)
+                panspeedX += 0.01f;
+            else
+                panspeedX = 0.0f;
+
+            if (down)
+                panspeedY -= 0.01f;
+            else if (up)
+                panspeedY += 0.01f;
+            else
+                panspeedY = 0.0f;
+
+            if (control) {
+                if (speed > 0.25f) speed = 0.25f;
+                if (speed < -0.25f) speed = -0.25f;
+            
+                if (panspeedX > 0.25f) panspeedX = 0.25f;
+                if (panspeedX < -0.25f) panspeedX = -0.25f;
+            
+                if (panspeedY > 0.25f) panspeedY = 0.25f;
+                if (panspeedY < -0.25f) panspeedY = -0.25f;
+            }
+            else {
+                if (speed > 50.0f) speed = 50.0f;
+                if (speed < -50.0f) speed = -50.0f;
+            
+                if (panspeedX > 50.0f) panspeedX = 50.0f;
+                if (panspeedX < -50.0f) panspeedX = -50.0f;
+            
+                if (panspeedY > 50.0f) panspeedY = 50.0f;
+                if (panspeedY < -50.0f) panspeedY = -50.0f;
+            }
         }
 
         mat.SetRotate(angle);
 
-        if (forward) 
-            mat.pos += mat.up * moveSpeed;
-        if (backward) 
-            mat.pos -= mat.up * moveSpeed;
-        if (left)
-            mat.pos -= mat.right * moveSpeed;
-        if (right) 
-            mat.pos += mat.right * moveSpeed;
+        if (controlsEnabled) {
+            mat.pos += mat.up * speed;
+            mat.pos += mat.right * panspeedX;
+            mat.pos += mat.at * panspeedY;
+        }
 
         cam->m_fFOV = fov;
         cam->m_fHintFOV = fov;
@@ -717,9 +578,10 @@ public:
         teleportPos = mat.pos;
 
         auto playa = FindPlayerPed(0);
+        auto vehicle = FindPlayerVehicle(0);
         if (enter) {
-            if (playa->m_pVehicle)
-                playa->m_pVehicle->Teleport(&teleportPos, 0, 1);
+            if (vehicle)
+                vehicle->Teleport(&teleportPos, 0, 1);
             else
                 playa->Teleport(&teleportPos, 0, 1);
         }
@@ -732,22 +594,40 @@ public:
             DebugMenuRender = (void(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuRender");
             DebugMenuShutdown = (void(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuShutdown");
             DebugMenuShowing = (bool(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuShowing");
+            DebugMenuClear = (void(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuClear");
             DebugMenuPrintString = (void(*)(const char*, float, float, int))GetProcAddress(gDebugMenuAPI.module, "DebugMenuPrintString");
             DebugMenuGetStringSize = (int(*)(const char*))GetProcAddress(gDebugMenuAPI.module, "DebugMenuGetStringSize");
         }
 
         plugin::Events::initEngineEvent += []() {
+
+        };
+
+        plugin::Events::initGameEvent.before += []() {
+            vehicleNamesStrings = {};
+            vehicleNames = {};
+        };
+
+        plugin::Events::initGameEvent.after += []() {
+            for (auto& it : vehicleNamesStrings) {
+                vehicleNames.push_back((char*)it.c_str());
+            }
+
+            DebugMenuClear();
             AddEntries();
         };
 
         plugin::Events::drawHudEvent += []() {
-            auto base = new T_CB_Generic([]() {
-                char buf[64];
-                auto playa = FindPlayerPed(0);
-                sprintf(buf, "%f %f %f", playa->GetPosition().x, playa->GetPosition().y, playa->GetPosition().z);
-                DebugMenuPrintString(buf, SCREEN_WIDTH - DebugMenuGetStringSize(buf), SCREEN_HEIGHT - 32.0f, 0);
-            });
-            base->Append();
+            if (playerCoords) {
+                auto base = new T_CB_Generic([]() {
+                    char buf[64];
+                    auto playa = FindPlayerPed(0);
+                    sprintf(buf, "%3f, %3f, %3f", playa->GetPosition().x, playa->GetPosition().y, playa->GetPosition().z);
+                    DebugMenuPrintString(buf, 0.0f, 0.0f, 0);
+                    CFont::DrawFonts();
+                });
+                base->Append();
+            }
         };
 
         plugin::Events::gameProcessEvent += []() {
@@ -764,5 +644,12 @@ public:
 
             ProcessDebugCam();
         };
-        }
+
+        CdeclEvent <AddressList<0x9D9EC1, H_CALL>, PRIORITY_AFTER, ArgPickN<char*, 0>, CBaseModelInfo*(char*)> onItemDefCars;
+        onItemDefCars.SetRefAddr(plugin::GetPattern("E8 ? ? ? ? 8B F0 83 C4 04 8D 44 24 78", 0));
+        onItemDefCars += [](char* modelName) {
+            vehicleNamesStrings.push_back(modelName);
+        };
+
+    }
 } debugIV;
