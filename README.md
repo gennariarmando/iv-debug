@@ -1,14 +1,23 @@
 # IV-Debug
 Adds debug entries for [iv-debugmenu](https://github.com/gennariarmando/iv-debugmenu).
 
-# How to use
-## 1 - Install DebugMenu
-Download [iv-debugmenu](https://github.com/gennariarmando/iv-debugmenu), move debugmenu.dll in the root of GTA IV directory (where the exe is), \
-move debugmenu.wtd in "pc/textures/".
+Only for GTA IV The Complete Edition
 
-## 2 - Install IV Debug
-Grab [latest](https://github.com/gennariarmando/iv-debug/releases) archive and move IVDebug.asi in the root or "plugins" folder.
-Enjoy
+# Download
+Download the latest archive from the [releases](https://github.com/gennariarmando/iv-debug/releases) page.
+
+# How to install
+An ASI Loader is required in order to inject the plugin into the game, if you already have one skip to the next step.\
+Recommended: [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader)
+
+Copy the file "debugmenu.dll" in the root of your GTA IV directory, "IVDebug.asi" can be either in root or "plugins" folder.
+
+# Screenshots
+<p align="center">
+<img src="https://i.imgur.com/Qpv2nGO.png" width="640" height="360">
+<img src="https://i.imgur.com/pzZXjtt.jpg" width="640" height="360">
+</p>
+
 
 # Links
 [plugin-sdk](https://github.com/DK22Pac/plugin-sdk)
