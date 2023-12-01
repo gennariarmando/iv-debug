@@ -1,6 +1,8 @@
 #include "plugin.h"
 #include "debugmenu_public.h"
 
+#include "T_CB_Generic.h"
+#include "CFont.h"
 #include "CPlayerInfo.h"
 #include "CClock.h"
 #include "CWeather.h"
@@ -14,22 +16,22 @@
 #include "CWorld.h"
 #include "CModelInfo.h"
 #include "CVehicleFactoryNY.h"
+#include "CPedFactoryNY.h"
 #include "CStreaming.h"
 #include "CFileType.h"
 #include "CAutomobile.h"
 #include "CHud.h"
 #include "CMenuManager.h"
+#include "CRadar.h"
+#include "CTheScripts.h"
+#include "CText.h"
+#include <map>
 
 using namespace plugin;
 
 DebugMenuAPI gDebugMenuAPI;
 
-void (*DebugMenuInit)();
-void (*DebugMenuProcess)();
-void (*DebugMenuRender)();
-void (*DebugMenuShutdown)();
 bool (*DebugMenuShowing)();
-void (*DebugMenuClear)();
 void (*DebugMenuPrintString)(const char* str, float x, float y, int style);
 int (*DebugMenuGetStringSize)(const char* str);
 
@@ -43,7 +45,7 @@ public:
     static inline bool playerCoords = false;
 
     static void CallCheat(int32_t i) {
-        static int32_t pattern = plugin::GetPattern("B3 01 EB 02 32 DB E8 ? ? ? ? 84 C0 0F 85", 1);
+        static uint32_t pattern = plugin::pattern::Get("B3 01 EB 02 32 DB E8 ? ? ? ? 84 C0 0F 85", 1);
         plugin::patch::SetUChar(pattern, 0);
         auto func = CCheat::m_aCheatFunctions[i];
         if (func)
@@ -55,6 +57,74 @@ public:
         plugin::patch::SetUChar(pattern, 1);
     }
 
+    static CPed* SpawnPed(uint32_t hash) {
+        auto playa = FindPlayerPed(0);
+        CStreaming::ScriptRequestModel(hash, 0);
+        CStreaming::LoadAllRequestedModels(0);
+
+        CPed* ped = nullptr;
+        if (CStreaming::ScriptHasModelLoaded(hash)) {
+            uint32_t index = 0;
+            CModelInfo::GetModelByHash(hash, &index);
+
+            rage::Matrix44 mat = {};
+            mat.Copy(playa->m_pMatrix);
+            mat.pos += playa->GetForward() * 10.0f;
+
+            CControlledByInfo info = { 0, 0, 0 };
+            ped = CPedFactoryNY::GetInstance()->CreatePed(&info, index, &mat, 1, 1);
+            ped->m_nRelationshipGroup = RELATIONSHIP_GROUP_CRIMINAL;
+            CWorld::Add(ped, 0);
+        }
+        return ped;
+    }
+
+    static void GiveWeapon(CPed* ped, int32_t hash, int32_t ammo) {
+        uint32_t index = 0;
+        CModelInfo::GetModelByHash(hash, &index);
+
+        int8_t weapType = -1;
+        for (uint32_t i = 0; i < NUM_WEAPONTYPES; i++) {
+            auto weap = CWeaponInfo::GetWeaponInfo(i);
+
+            if (weap->m_nModelHash == hash) {
+                weapType = i;
+                break;
+            }
+        }
+
+        if (weapType == -1)
+            return;
+
+        CStreaming::RequestModel(index, CFileTypeMgr::IndexOfType_WDR, 2);
+        CStreaming::LoadAllRequestedModels(0);
+        ped->m_WeaponData.GiveWeapon((eWeaponType)weapType, ammo, 1, 1, 1);
+        CStreaming::SetIsModelDeletable(index, CFileTypeMgr::IndexOfType_WDR);
+    }
+
+    static void GiveWeapon(CPed* ped, eWeaponType weapType, int32_t ammo) {
+        uint32_t index = 0;
+        CModelInfo::GetModelByHash(CWeaponInfo::GetWeaponInfo(weapType)->m_nModelHash, &index);
+
+        CStreaming::RequestModel(index, CFileTypeMgr::IndexOfType_WDR, 2);
+        CStreaming::LoadAllRequestedModels(0);
+        ped->m_WeaponData.GiveWeapon(weapType, ammo, 1, 1, 1);
+        CStreaming::SetIsModelDeletable(index, CFileTypeMgr::IndexOfType_WDR);
+    }
+
+    static void SpawnGroupOfEnemy() {
+        for (int32_t i = 0; i < 10; i++) {
+            CPed* ped = SpawnPed(MODEL_HASH_M_Y_STREET_01);
+            ped->m_pMatrix->pos.x += (i - 5) * 2.0f;
+            ped->m_pMatrix->pos.y += (i - 5) * 2.0f;
+
+            ped->SetRelationship(RELATIONSHIP_HATE, RELATIONSHIP_GROUP_PLAYER);
+            ped->SetRelationship(RELATIONSHIP_DISLIKE, RELATIONSHIP_GROUP_PLAYER);
+
+            GiveWeapon(ped, WEAPONTYPE_AK47, 1000);
+        }
+    }
+
     static CVehicle* SpawnVehicle(uint32_t hash) {
         auto playa = FindPlayerPed(0);
         CStreaming::ScriptRequestModel(hash, 0);
@@ -64,12 +134,12 @@ public:
         if (CStreaming::ScriptHasModelLoaded(hash)) {
             uint32_t index = 0;
             CModelInfo::GetModelByHash(hash, &index);
-
+       
             rage::Matrix44 mat = {};
             mat.Copy(playa->m_pMatrix);
             mat.pos += playa->GetForward() * 10.0f;
-
-            veh = GetVehicleFactory()->CreateVehicle(index, RANDOM_VEHICLE, &mat, 1);
+       
+            veh = CVehicleFactoryNY::GetInstance()->CreateVehicle(index, RANDOM_VEHICLE, &mat, 1);
             CWorld::Add(veh, 0);
         }
         return veh;
@@ -162,6 +232,166 @@ public:
 
     static inline std::vector<std::string> vehicleNamesStrings = {};
     static inline std::vector<char*> vehicleNames;
+
+    static inline std::pair<char*, char*> missionListTLAD[] = {
+        { "opening_credits", "Clean and Serene" },
+        { "Billy2", "Angels in America" },
+        { "Billy3", "It's War" },
+        { "Billy4", "Action/Reaction" },
+        { "Billy5", "Buyer's Market" },
+        { "Billy6", "Buyer's Market" },
+        { "Jim1", "Liberty City Choppers" },
+        { "Jim2", "Bad Cop Drop" },
+        { "Jim4", "Hit The Pipe" },
+        { "Jim5", "End Of Chapter" },
+        { "Jim6", "Bad Standing" },
+        { "Stubbs1", "Politics" },
+        { "Stubbs2", "Off Route" },
+        { "Stubbs3p", "Proc Odd Jobs" },
+        { "Stubbs4", "Get Lost" },
+        { "E1EndCredits", "TLAD Complete" },
+        { "Ashley1", "Coming Down" },
+        { "Ashley2", "Roman's Holiday" },
+        { "Elizabeta1", "Heavy Toll" },
+        { "Elizabeta2", "Marta Full Of Grace" },
+        { "Elizabeta3", "Shifting Weight" },
+        { "Ray1", "Diamonds In The Rough" },
+        { "Ray2", "Collector's Item" },
+        { "Ray3", "Was It Worth it?" },
+        { "Jim3p", "I Want One Of Those" },
+    };
+
+    static inline std::pair<char*, char*> missionListTBOGT[] = {
+        { "opening_credits", "I Luv LC" },
+        { "tony2", "Chinese Takeout" },
+        { "tony3", "Practice Swing" },
+        { "tony4a", "Blog This!..." },
+        { "tony5", "Bang Bang" },
+        { "tony4b", "...Blog This!" },
+        { "tony6", "Boulevard Baby" },
+        { "tony7", "Frosting On The Cake" },
+        { "tony8", "Not So Fast" },
+        { "tony9", "Ladies' Night" },
+        { "tony10", "Ladies Half Price" },
+        { "tony11", "Departure Time" },
+        { "E2EndCredits", "TBoGT Complete" },
+        { "brother1", "Kibbutz Number One" },
+        { "brother2", "This Ain't Checkers" },
+        { "brother3", "No. 3" },
+        { "yusuf1", "Sexy Time" },
+        { "yusuf2", "High Dive" },
+        { "yusuf3", "Caught With Your Pants Down" },
+        { "yusuf4", "For The Man Who Has Everything" },
+        { "friends1", "Corner Kids" },
+        { "friends2", "Clocking Off" },
+        { "mum1", "Momma's Boy" },
+        { "bulgarin1", "Going Deep" },
+        { "bulgarin2", "Dropping In" },
+        { "bulgarin3", "In The Crosshairs" },
+        { "rocco1", "Party's Over" },
+    };
+
+    static inline std::pair<char*, char*> missionListIV[] = {
+        { "Roman1", "The Cousins Bellic" },
+        { "Roman2", "It’s Your Call" },
+        { "Roman3", "Three’s a Crowd" },
+        { "Roman4", "Bleed out" },
+        { "Roman5", "Easy Fare" },
+        { "Roman6", "Jamaican Heat" },
+        { "Roman7", "Uncle Vlad" },
+        { "Roman8p", "Taxi Mission" },
+        { "Roman9", "Logging On" },
+        { "Roman10p", "Steal Banshee for Brucie" },
+        { "Roman11", "Roman’s Sorrow" },
+        { "Roman12", "Hostile Negotiation" },
+        { "Michelle1", "First Date" },
+        { "Vlad1", "Bull in a China Shop" },
+        { "Vlad2", "Hung out to Dry" },
+        { "Vlad3", "Clean Getaway" },
+        { "Vlad4", "Ivan the Not So Terrible" },
+        { "Jacob1", "Concrete Jungle" },
+        { "Jacob2", "Shadow" },
+        { "Jacob3p", "Drug delivery Mission" },
+        { "Faustin1", "Crime and Punishment" },
+        { "Faustin2", "Do You Have Protection?" },
+        { "Faustin3", "Final Destination" },
+        { "Faustin4", "No Love Lost" },
+        { "Faustin5", "Rigged to Blow" },
+        { "Faustin6", "The Master and the Molotov (Dimitri)" },
+        { "Faustin7", "Russian Revolution (Dimitri)" },
+        { "Brucie1", "Search and Delete" },
+        { "Brucie2", "Easy as Can Be" },
+        { "Brucie3a", "Out of the Closet" },
+        { "Brucie4", "Nr. 1" },
+        { "Manny1", "Escuela of the Streets" },
+        { "Manny2", "Street Sweeper" },
+        { "Manny3", "The Puerto Rican Connection" },
+        { "Elizabeta1", "Luck of the Irish" },
+        { "Elizabeta2", "Blow your Cover" },
+        { "Elizabeta3", "The Snow Storm" },
+        { "Elizabeta4", "Have a Heart" },
+        { "Playboy2", "Deconstruction for Beginners" },
+        { "Playboy3", "Photo Shoot" },
+        { "Playboy4", "The Holland Play" },
+        { "Dwayne1", "Ruff Rider" },
+        { "Dwayne3", "Undress to Kill" },
+        { "Francis1", "Call and Collect" },
+        { "Francis2a", "Final Interview" },
+        { "Francis3", "Holland Nights" },
+        { "Francis4", "Lure" },
+        { "Francis5", "Blood Brothers" },
+        { "Packie1", "Harboring a Grudge" },
+        { "Packie2", "Waste Not Want Knots" },
+        { "Packie3", "Three Leaf Clover" },
+        { "UlPaper1", "Wrong is Right" },
+        { "UlPaper2", "Portrait of a Killer" },
+        { "UlPaper3", "Dust off" },
+        { "UlPaper4", "Paper Trial" },
+        { "Ray1", "A long Way to Fall" },
+        { "Ray2", "Taking in the Trash" },
+        { "Ray3", "Meltdown" },
+        { "Ray4", "Museum Piece" },
+        { "Ray5", "No Way on the Subway" },
+        { "Ray6", "Late Checkout" },
+        { "Bernie1", "Hating the Haters" },
+        { "Bernie2", "Union Drive" },
+        { "Bernie3", "Buoys Ahoy" },
+        { "Gerry1", "Action Speak Louder Than Words" },
+        { "Gerry2", "I need your Clothes, Your Boots and Your Motorcycle" },
+        { "Gerry3", "Unknown Mission 1" },
+        { "Gerry4", "Unknown Mission 2" },
+        { "Gerry5", "Unknown Mission 3" },
+        { "Derrick1", "Smackdown" },
+        { "Derrick2", "Babysitting" },
+        { "Derrick3", "Tunnel of Death" },
+        { "Phil1", "Catch the Wave" },
+        { "Phil2", "Kill mission" },
+        { "Phil3", "Trespass" },
+        { "Phil4", "Truck Hustle" },
+        { "Phil5", "To Live and Die in Alderney" },
+        { "Jimmy1", "Unknown Mission 1" },
+        { "Jimmy2", "Payback" },
+        { "Jimmy3", "Unknown Mission 3" },
+        { "Jimmy4", "Pest Control" },
+        { "Gambetti1", "Entourage" },
+        { "Gambetti2", "Dining Out" },
+        { "Gambetti3", "Liquidize the Assests" },
+        { "Finale1a", "One Last Thing" },
+        { "Finale2", "A Dish served cold" },
+        { "Finale3", "Wedding" },
+        { "Finale5", "Out of Commission"}
+    };
+
+    static inline int32_t scriptId = 0;
+    static inline std::vector<char*> scriptNames = {};
+    static inline int32_t vehicleId = 0;
+    static inline int32_t pedId = 0;
+    static inline std::vector<char*> pedNames;
+    static inline std::vector<std::string> pedNamesStrings;
+    static inline std::vector<std::string> weaponNamesStrings = {};
+    static inline std::vector<char*> weaponNames;
+    static inline int32_t weapId = 0;
+
     static void AddEntries() {
         // Time & Weather
         DebugMenuAddInt32("Time & Weather", "Current Hour", &CClock::ms_nGameClockHours, nullptr, 1, 0, 23, nullptr);
@@ -185,66 +415,76 @@ public:
         DebugMenuAddInt32("Time & Weather", "New Weather", &CWeather::NewWeatherType, nullptr, 1, 0, 9, weathers);
         DebugMenuAddFloat32("Time & Weather", "Time scale", &CTimer::ms_fTimeScale, nullptr, 0.1f, 0.0f, 10.0f);
 
-        // Spawn
-        static int32_t vehId = 0;
-        auto e = DebugMenuAddInt32("Spawn", "Spawn Vehicle ID", &vehId, nullptr, 1, 0, vehicleNames.size() - 1, (const char**)vehicleNames.data());
+        // Spawn | Ped
+        auto e = DebugMenuAddInt32("Spawn|Ped", "Spawn Ped ID", &pedId, nullptr, 1, 0, pedNames.size() - 1, (const char**)pedNames.data());
         DebugMenuEntrySetWrap(e, true);
-        DebugMenuAddCmd("Spawn", "Spawn Vehicle", []() {
+        DebugMenuAddCmd("Spawn|Ped", "Spawn Ped", []() {
+            SpawnPed(rage::atStringHash(pedNames[pedId], 0));
+        });
+
+        DebugMenuAddCmd("Spawn|Ped", "Spawn Group of Enemies", []() {
+            SpawnGroupOfEnemy();
+        });
+
+        // Spawn | Vehicle
+        e = DebugMenuAddInt32("Spawn|Vehicle", "Spawn Vehicle ID", &vehicleId, nullptr, 1, 0, vehicleNames.size() - 1, (const char**)vehicleNames.data());
+        DebugMenuEntrySetWrap(e, true);
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn Vehicle", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey(vehicleNames[vehId], 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash(vehicleNames[vehicleId], 0), &index);
             CCheat::VehicleCheat(index);
         });
-        DebugMenuAddCmd("Spawn", "Spawn Turismo", []() {
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn Turismo", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey("turismo", 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash("turismo", 0), &index);
             CCheat::VehicleCheat(index);
         });
 
-        DebugMenuAddCmd("Spawn", "Spawn Comet", []() {
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn Comet", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey("comet", 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash("comet", 0), &index);
             CCheat::VehicleCheat(index);
         });
 
-        DebugMenuAddCmd("Spawn", "Spawn Voodoo", []() {
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn Voodoo", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey("voodoo", 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash("voodoo", 0), &index);
             CCheat::VehicleCheat(index);
         });
 
-        DebugMenuAddCmd("Spawn", "Spawn Rancher", []() {
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn Rancher", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey("rancher", 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash("rancher", 0), &index);
             CCheat::VehicleCheat(index);
         });
 
-        DebugMenuAddCmd("Spawn", "Spawn Admiral", []() {
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn Admiral", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey("admiral", 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash("admiral", 0), &index);
             CCheat::VehicleCheat(index);
         });
 
-        DebugMenuAddCmd("Spawn", "Spawn Stretch", []() {
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn Stretch", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey("stretch", 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash("stretch", 0), &index);
             CCheat::VehicleCheat(index);
         });
 
-        DebugMenuAddCmd("Spawn", "Spawn SuperGT", []() {
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn SuperGT", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey("supergt", 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash("supergt", 0), &index);
             CCheat::VehicleCheat(index);
         });
 
-        DebugMenuAddCmd("Spawn", "Spawn Taxi", []() {
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn Taxi", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey("taxi", 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash("taxi", 0), &index);
             CCheat::VehicleCheat(index);
         });
 
-        DebugMenuAddCmd("Spawn", "Spawn Police", []() {
+        DebugMenuAddCmd("Spawn|Vehicle", "Spawn Police", []() {
             uint32_t index = 0;
-            CModelInfo::GetModelByHash(rage::GetHashKey("police", 0), &index);
+            CModelInfo::GetModelByHash(rage::atStringHash("police", 0), &index);
             CCheat::VehicleCheat(index);
         });
 
@@ -257,10 +497,10 @@ public:
             CallCheat(CHEAT_WEAPONS_2);
         });
 
-        if (gGameEpisode == EPISODE_TBOGT)
-            DebugMenuAddCmd("Cheats|Player", "Weapons 3 (TBOGT)", []() {
+        DebugMenuAddCmd("Cheats|Player", "Weapons 3 (TBOGT)", []() {
+            if (CMenuManager::m_Episode  == EPISODE_TBOGT)
                 CallCheat(CHEAT_WEAPONS_3);
-            });
+        });
 
         DebugMenuAddCmd("Cheats|Player", "Health Armour Ammo", []() {
             CallCheat(CHEAT_HEALTH_ARMOUR_AMMO);
@@ -380,9 +620,36 @@ public:
         static const char* boolstr[] = { "Off", "On" };
         e = DebugMenuAddInt8("Player", "Invincible", (int8_t*)&godMode, nullptr, 1, 0, 1, boolstr);
         DebugMenuEntrySetWrap(e, true);
-        DebugMenuAddCmd("Player", "Clear Wanted Level", []() { FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.m_nWantedLevel = 0; });
+        DebugMenuAddCmd("Player", "Clear Wanted Level", []() { FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.m_WantedLevel = eWantedLevel::WANTED_CLEAN; });
         DebugMenuAddCmd("Player", "Give Money", []() { FindPlayerPed(0)->m_pPlayerInfo->m_nMoney += 10000; });
         DebugMenuAddCmd("Player", "Remove Money", []() { FindPlayerPed(0)->m_pPlayerInfo->m_nMoney -= 10000; });
+
+        e = DebugMenuAddInt32("Weapon", "Get Weapon ID", &weapId, nullptr, 1, 0, weaponNames.size() - 1, (const char**)weaponNames.data());
+        DebugMenuEntrySetWrap(e, true);
+        DebugMenuAddCmd("Weapon", "Get Weapon", []() {
+            auto playa = FindPlayerPed(0);
+            if (playa)
+                GiveWeapon(playa, rage::atStringHash(weaponNames[weapId], 0), 1000);
+        });
+
+        // Vehicle
+        DebugMenuAddCmd("Vehicle", "Fix", []() { 
+            auto vehicle = FindPlayerVehicle(0);
+            if (vehicle) {
+                vehicle->Fix();
+                vehicle->SetHealth(1000.0f, 0);
+            }
+        });
+
+        DebugMenuAddCmd("Vehicle", "Flip", []() {
+            auto vehicle = FindPlayerVehicle(0);
+            if (vehicle) {
+                rage::Vector4 rot = vehicle->m_pMatrix->GetRotation();
+                rot.y -= rage::pi();
+                vehicle->m_pMatrix->SetRotate(rot);
+                vehicle->Teleport(&vehicle->GetPosition(), 0, 1);
+            }
+        });
 
         // Debug
         e = DebugMenuAddCmd("Debug|Camera", "Toggle Debug Camera", []() {
@@ -422,6 +689,29 @@ public:
                     auto playa = FindPlayerPed(0);
                     playa->Teleport(&pos, 0, 1);
                 }
+            }
+        });
+
+        e = DebugMenuAddInt32("Script", "Mission select", &scriptId, nullptr, 1, 0, scriptNames.size() - 1, (const char**)scriptNames.data());
+        DebugMenuEntrySetWrap(e, true);
+
+        DebugMenuAddCmd("Script", "Start mission script", []() {
+            const char* name = missionListIV[scriptId].first;
+            if (CMenuManager::m_Episode  == EPISODE_TLAD) {
+                name = missionListTLAD[scriptId].first;
+            }
+            else if (CMenuManager::m_Episode  == EPISODE_TBOGT) {
+                name = missionListTBOGT[scriptId].first;
+            }
+
+            int32_t index = CTheScripts::GetScriptIndex(name);
+            if (index > 0) {
+                CStreaming::RequestScript(index, 0x14);
+                CStreaming::LoadAllRequestedModels(0);
+                auto playa = FindPlayerPed(0);
+                if (playa && playa->CanStartMission())
+                    CTheScripts::StartScript(name, 0, 0, 1024);
+                CStreaming::SetIsModelDeletable(index, CFileTypeMgr::IndexOfType_SCO);
             }
         });
 
@@ -475,7 +765,7 @@ public:
         if (cam) {
             if (playa) {
                 playa->m_pPlayerInfo->m_bDisableControls = disabled;
-                playa->m_pPlayerInfo->m_PlayerData.m_Wanted.m_bIgnoredByEveryone = disabled;
+                playa->m_pPlayerInfo->m_PlayerData.m_Wanted.m_EverybodyBackOff = disabled;
             }
         }
     }
@@ -582,32 +872,38 @@ public:
         auto playa = FindPlayerPed(0);
         auto vehicle = FindPlayerVehicle(0);
         if (enter) {
-            if (vehicle)
+            if (vehicle) {
                 vehicle->Teleport(&teleportPos, 0, 1);
+                vehicle->SetInitialVelocity({ 0.0f,0.0f,0.0f });
+            }
             else
                 playa->Teleport(&teleportPos, 0, 1);
         }
     }
+
     DebugIV() {
         // Init DebugMenu
         if (DebugMenuLoad()) {
-            DebugMenuInit = (void(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuInit");
-            DebugMenuProcess = (void(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuProcess");
-            DebugMenuRender = (void(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuRender");
-            DebugMenuShutdown = (void(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuShutdown");
             DebugMenuShowing = (bool(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuShowing");
-            DebugMenuClear = (void(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuClear");
             DebugMenuPrintString = (void(*)(const char*, float, float, int))GetProcAddress(gDebugMenuAPI.module, "DebugMenuPrintString");
             DebugMenuGetStringSize = (int(*)(const char*))GetProcAddress(gDebugMenuAPI.module, "DebugMenuGetStringSize");
         }
 
-        plugin::Events::initEngineEvent += []() {
-
-        };
-
         plugin::Events::initGameEvent.before += []() {
-            vehicleNamesStrings = {};
+            vehicleId = 0;
             vehicleNames = {};
+            vehicleNamesStrings = {};
+
+            scriptId = 0;
+            scriptNames = {};
+
+            pedId = 0;
+            pedNames = {};
+            pedNamesStrings = {};
+
+            weapId = 0;
+            weaponNames = {};
+            weaponNamesStrings = {};
         };
 
         plugin::Events::initGameEvent.after += []() {
@@ -615,20 +911,42 @@ public:
                 vehicleNames.push_back((char*)it.c_str());
             }
 
-            DebugMenuClear();
+            for (auto& it : pedNamesStrings) {
+                pedNames.push_back((char*)it.c_str());
+            }
+
+            for (auto& it : weaponNamesStrings) {
+                weaponNames.push_back((char*)it.c_str());
+            }
+
+            if (CMenuManager::m_Episode == EPISODE_IV) {
+                for (auto& it : missionListIV) {
+                    scriptNames.push_back(it.second);
+                }
+            }
+            else if (CMenuManager::m_Episode == EPISODE_TLAD) {
+                for (auto& it : missionListTLAD) {
+                    scriptNames.push_back(it.second);
+                }
+            }
+            else if (CMenuManager::m_Episode  == EPISODE_TBOGT) {
+                for (auto& it : missionListTBOGT) {
+                    scriptNames.push_back(it.second);
+                }
+            }
+
             AddEntries();
         };
 
         plugin::Events::drawHudEvent += []() {
             if (playerCoords) {
-                auto base = new T_CB_Generic([]() {
+                auto base = new T_CB_Generic_NoArgs([]() {
                     char buf[64];
                     auto playa = FindPlayerPed(0);
                     sprintf(buf, "%3f, %3f, %3f", playa->GetPosition().x, playa->GetPosition().y, playa->GetPosition().z);
                     DebugMenuPrintString(buf, 0.0f, 0.0f, 0);
-                    CFont::DrawFonts();
                 });
-                base->Append();
+                base->Init();
             }
         };
 
@@ -647,11 +965,19 @@ public:
             ProcessDebugCam();
         };
 
-        CdeclEvent <AddressList<0x9D9EC1, H_CALL>, PRIORITY_AFTER, ArgPickN<char*, 0>, CBaseModelInfo*(char*)> onItemDefCars;
-        onItemDefCars.SetRefAddr(plugin::GetPattern("E8 ? ? ? ? 8B F0 83 C4 04 8D 44 24 78", 0));
+        CdeclEvent <AddressList<0x9D9EC1, H_CALL>, PRIORITY_AFTER, ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefCars({ "E8 ? ? ? ? 8B F0 83 C4 04 8D 44 24 78" });
         onItemDefCars += [](char* modelName) {
             vehicleNamesStrings.push_back(modelName);
         };
 
+        CdeclEvent <AddressList<0x9D8447, H_CALL>, PRIORITY_AFTER, ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefPeds({ "E8 ? ? ? ? 83 C4 4C 8B F0" });
+        onItemDefPeds += [](char* modelName) {
+            pedNamesStrings.push_back(modelName);
+        };
+    
+        CdeclEvent <AddressList<0x9DA0CC, H_CALL>, PRIORITY_AFTER, ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefWeap({ "E8 ? ? ? ? 8B F0 83 C4 20 8D 44 24 24" });
+        onItemDefWeap += [](char* modelName) {
+            weaponNamesStrings.push_back(modelName);
+        };
     }
 } debugIV;
