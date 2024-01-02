@@ -25,9 +25,9 @@
 #include "CRadar.h"
 #include "CTheScripts.h"
 #include "CText.h"
+#include "CControlMgr.h"
+#include "CCutsceneMgr.h"
 #include <map>
-
-using namespace plugin;
 
 DebugMenuAPI gDebugMenuAPI;
 
@@ -43,6 +43,7 @@ public:
     static inline int32_t controlMode = 0;
     static inline rage::Vector4 teleportPos = {};
     static inline bool playerCoords = false;
+    static inline bool drawCameraOverlay = false;
 
     static void CallCheat(int32_t i) {
         static uint32_t pattern = plugin::pattern::Get("B3 01 EB 02 32 DB E8 ? ? ? ? 84 C0 0F 85", 1);
@@ -415,6 +416,28 @@ public:
         DebugMenuAddInt32("Time & Weather", "New Weather", &CWeather::NewWeatherType, nullptr, 1, 0, 9, weathers);
         DebugMenuAddFloat32("Time & Weather", "Time scale", &CTimer::ms_fTimeScale, nullptr, 0.1f, 0.0f, 10.0f);
 
+        static float farDOF = 0.0f;
+        DebugMenuAddFloat32("Time & Weather", "m_fFarDOF", &farDOF, []() {
+            CCam* cam = TheCamera.m_pCamFollowVeh;
+            if (cam) {
+                if (farDOF < 0.0f)
+                    farDOF = cam->m_fFarDOF;
+
+                cam->m_fFarDOF = farDOF;
+            }
+        }, 0.1f, 0.0f, 100.0f);
+
+        static float nearDOF = 0.0f;
+        DebugMenuAddFloat32("Time & Weather", "m_fNearDOF", &nearDOF, []() {
+            CCam* cam = TheCamera.m_pCamFollowVeh;
+            if (cam) {
+                if (nearDOF < 0.0f)
+                    nearDOF = cam->m_fNearDOF;
+
+                cam->m_fNearDOF = nearDOF;
+            }
+        }, 0.1f, 0.0f, 100.0f);
+
         // Spawn | Ped
         auto e = DebugMenuAddInt32("Spawn|Ped", "Spawn Ped ID", &pedId, nullptr, 1, 0, pedNames.size() - 1, (const char**)pedNames.data());
         DebugMenuEntrySetWrap(e, true);
@@ -670,6 +693,23 @@ public:
 
         DebugMenuAddVarBool8("Debug", "Disable HUD", &CHud::HideAllComponents, nullptr);
         DebugMenuAddVarBool8("Debug", "Show Player Coords", &playerCoords, nullptr);
+        DebugMenuAddVarBool8("Debug", "Draw Camera Overlay", &drawCameraOverlay, []() {
+            if (drawCameraOverlay)
+                CCutsceneMgr::LoadSprites();
+            else
+                CCutsceneMgr::UnloadSprites();
+            });
+
+        static int8_t episodeId = 0;
+        DebugMenuAddVar("Debug", "Episode Id", &episodeId, []() {
+            char buf[8];
+            sprintf(buf, "%d", episodeId);
+            
+            gGameEpisode = episodeId;
+            CMenuManager::m_Episode = episodeId;
+            CMenuManager::m_EpisodeStr = buf;
+            CMenuManager::m_EpisodeToStart = episodeId;
+        }, 1, 0, 126, nullptr);
 
         // Misc
         DebugMenuAddCmd("Misc", "Teleport to Waypoint", []() {
@@ -780,14 +820,14 @@ public:
         ToggleControls(controlMode == 0);
 
         bool controlsEnabled = !DebugMenuShowing();
-        bool forward = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_W, 2, 0);
-        bool backward = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_S, 2, 0);
-        bool left = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_A, 2, 0);
-        bool right = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_D, 2, 0);
-        bool control = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_LCONTROL, 2, 0) || CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_RCONTROL, 2, 0);
-        bool enter = CPad::KeyboardMgr.IsKeyJustPressed(eKeyCodes::KEY_RETURN, 2, 0);
-        bool up = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_UP, 2, 0);
-        bool down = CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_DOWN, 2, 0);
+        bool forward = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_W, 2, 0);
+        bool backward = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_S, 2, 0);
+        bool left = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_A, 2, 0);
+        bool right = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_D, 2, 0);
+        bool control = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_LCONTROL, 2, 0) || CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RCONTROL, 2, 0);
+        bool enter = CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_RETURN, 2, 0);
+        bool up = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_UP, 2, 0);
+        bool down = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_DOWN, 2, 0);
         bool lmb = CPad::IsMouseButtonPressed(1);
         int32_t mouseX = 0, mouseY = 0;
         CPad::GetMouseInput(&mouseX, &mouseY);
@@ -948,15 +988,22 @@ public:
                 });
                 base->Init();
             }
+
+            if (drawCameraOverlay) {
+                auto base = new T_CB_Generic_NoArgs([]() {
+                    plugin::CallDyn(plugin::pattern::Get("83 EC 30 FF 35"));
+                });
+                base->Init();
+            }
         };
 
         plugin::Events::gameProcessEvent += []() {
             if (CMenuManager::m_MenuActive)
                 return;
 
-            if ((CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_LCONTROL, 2, 0) ||
-                CPad::KeyboardMgr.IsKeyPressed(eKeyCodes::KEY_RCONTROL, 2, 0)) &&
-                CPad::KeyboardMgr.IsKeyJustPressed(eKeyCodes::KEY_B, 2, 0))
+            if ((CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_LCONTROL, 2, 0) ||
+                CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RCONTROL, 2, 0)) &&
+                CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_B, 2, 0))
                 ToggleDebugCam();
 
             auto playa = FindPlayerPed(0);
@@ -965,17 +1012,17 @@ public:
             ProcessDebugCam();
         };
 
-        CdeclEvent <AddressList<0x9D9EC1, H_CALL>, PRIORITY_AFTER, ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefCars({ "E8 ? ? ? ? 8B F0 83 C4 04 8D 44 24 78" });
+        plugin::CdeclEvent <plugin::AddressList<0x9D9EC1, plugin::H_CALL>, plugin::PRIORITY_AFTER, plugin::ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefCars({ "E8 ? ? ? ? 8B F0 83 C4 04 8D 44 24 78" });
         onItemDefCars += [](char* modelName) {
             vehicleNamesStrings.push_back(modelName);
         };
 
-        CdeclEvent <AddressList<0x9D8447, H_CALL>, PRIORITY_AFTER, ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefPeds({ "E8 ? ? ? ? 83 C4 4C 8B F0" });
+        plugin::CdeclEvent <plugin::AddressList<0x9D8447, plugin::H_CALL>, plugin::PRIORITY_AFTER, plugin::ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefPeds({ "E8 ? ? ? ? 83 C4 4C 8B F0" });
         onItemDefPeds += [](char* modelName) {
             pedNamesStrings.push_back(modelName);
         };
     
-        CdeclEvent <AddressList<0x9DA0CC, H_CALL>, PRIORITY_AFTER, ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefWeap({ "E8 ? ? ? ? 8B F0 83 C4 20 8D 44 24 24" });
+        plugin::CdeclEvent <plugin::AddressList<0x9DA0CC, plugin::H_CALL>, plugin::PRIORITY_AFTER, plugin::ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefWeap({ "E8 ? ? ? ? 8B F0 83 C4 20 8D 44 24 24" });
         onItemDefWeap += [](char* modelName) {
             weaponNamesStrings.push_back(modelName);
         };
