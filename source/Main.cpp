@@ -28,6 +28,9 @@
 #include "CControlMgr.h"
 #include "CCutsceneMgr.h"
 #include <map>
+#include "extensions\ScriptCommands.h"
+#include "CWeaponInfo.h"
+#include "audRadioStation.h"
 
 DebugMenuAPI gDebugMenuAPI;
 
@@ -40,10 +43,39 @@ public:
     static inline bool debugCamera = false;
     static inline float fov = 45.0f;
     static inline bool godMode = false;
+	static inline bool infiniteAmmo = false;
+    static inline bool pedsIgnorePlayer = false;
+    static inline bool vehicleGodMode = false;
+    static inline bool neverWanted = false;
+
     static inline int32_t controlMode = 0;
     static inline rage::Vector4 teleportPos = {};
     static inline bool playerCoords = false;
     static inline bool drawCameraOverlay = false;
+    static inline bool drawCamMode = false;
+
+    
+    static inline int32_t debugMessageTimer = 0;
+    static inline std::string debugMessage = {};
+
+    static void SetDebugMessage(std::string const& str) {
+        debugMessage.assign(str);
+        debugMessageTimer = CTimer::GetTimeInMilliseconds() + 1500;
+    }
+
+    static void DrawDebugMessage() {
+        if (debugMessage.empty())
+            return;
+
+        if (debugMessageTimer > CTimer::GetTimeInMilliseconds()) {
+            float x = DebugMenuGetStringSize(debugMessage.c_str()) / 2;
+			x = (SCREEN_WIDTH / 2) - x;
+            DebugMenuPrintString(debugMessage.c_str(), x, SCREEN_HEIGHT - 100.0f, 0);
+        }
+        else {
+            debugMessage.clear();
+        }
+    }
 
     static void CallCheat(int32_t i) {
         static uint32_t pattern = plugin::pattern::Get("B3 01 EB 02 32 DB E8 ? ? ? ? 84 C0 0F 85", 1);
@@ -53,7 +85,6 @@ public:
             func();
         else
             CCheat::m_aCheatsActive[i] = CCheat::m_aCheatsActive[i] == 0;
-
 
         plugin::patch::SetUChar(pattern, 1);
     }
@@ -116,13 +147,18 @@ public:
     static void SpawnGroupOfEnemy() {
         for (int32_t i = 0; i < 10; i++) {
             CPed* ped = SpawnPed(MODEL_HASH_M_Y_STREET_01);
-            ped->m_pMatrix->pos.x += (i - 5) * 2.0f;
-            ped->m_pMatrix->pos.y += (i - 5) * 2.0f;
-
-            ped->SetRelationship(RELATIONSHIP_HATE, RELATIONSHIP_GROUP_PLAYER);
-            ped->SetRelationship(RELATIONSHIP_DISLIKE, RELATIONSHIP_GROUP_PLAYER);
+            ped->m_pMatrix->pos.x += (i - 5) * 3.0f;
+            ped->m_pMatrix->pos.y += (i - 5) * 3.0f;
 
             GiveWeapon(ped, WEAPONTYPE_AK47, 1000);
+
+            plugin::scripting::CallCommandById<void>(plugin::Commands::BLOCK_PED_WEAPON_SWITCHING, CPools::GetPedRef(ped), false);
+            plugin::scripting::CallCommandById<void>(plugin::Commands::SET_CHAR_ACCURACY, CPools::GetPedRef(ped), 100);
+
+            plugin::scripting::CallCommandById<void>(
+                plugin::Commands::TASK_COMBAT,
+                CPools::GetPedRef(ped),
+                CPools::GetPedRef(FindPlayerPed(0)));
         }
     }
 
@@ -181,8 +217,13 @@ public:
 
     static void DeleteSavedCams() {
         FILE* f = fopen("campositions.txt", "w");
-        if (f)
+        if (f) {
             fclose(f);
+
+            SetDebugMessage("Camera positions deleted");
+            numSavedCameras = 0;
+            currentSavedCam = 0;
+        }
     }
 
     static void SaveCam(CCam* cam) {
@@ -199,6 +240,8 @@ public:
             fclose(f);
             LoadSavedCams();
             currentSavedCam = numSavedCameras - 1;
+
+            SetDebugMessage("Camera position saved");
         }
     }
 
@@ -221,14 +264,26 @@ public:
 
     static void NextSavedCam(CCam* cam) {
         currentSavedCam++;
-        if (currentSavedCam >= numSavedCameras) currentSavedCam = 0;
+        if (currentSavedCam >= numSavedCameras)
+            currentSavedCam = 0;
         LoadCam(cam);
+
+        if (numSavedCameras == 0)
+            SetDebugMessage("No camera positions found");
+        else
+            SetDebugMessage("Next camera position loaded");
     }
 
     static void PrevSavedCam(CCam* cam) {
         currentSavedCam--;
-        if (currentSavedCam < 0) currentSavedCam = numSavedCameras - 1;
+        if (currentSavedCam < 0) 
+            currentSavedCam = numSavedCameras - 1;
         LoadCam(cam);
+
+        if (numSavedCameras == 0)
+            SetDebugMessage("No camera positions found");
+        else
+            SetDebugMessage("Previous camera position loaded");
     }
 
     static inline std::vector<std::string> vehicleNamesStrings = {};
@@ -294,8 +349,8 @@ public:
 
     static inline std::pair<char*, char*> missionListIV[] = {
         { "Roman1", "The Cousins Bellic" },
-        { "Roman2", "It’s Your Call" },
-        { "Roman3", "Three’s a Crowd" },
+        { "Roman2", "Itï¿½s Your Call" },
+        { "Roman3", "Threeï¿½s a Crowd" },
         { "Roman4", "Bleed out" },
         { "Roman5", "Easy Fare" },
         { "Roman6", "Jamaican Heat" },
@@ -303,7 +358,7 @@ public:
         { "Roman8p", "Taxi Mission" },
         { "Roman9", "Logging On" },
         { "Roman10p", "Steal Banshee for Brucie" },
-        { "Roman11", "Roman’s Sorrow" },
+        { "Roman11", "Romanï¿½s Sorrow" },
         { "Roman12", "Hostile Negotiation" },
         { "Michelle1", "First Date" },
         { "Vlad1", "Bull in a China Shop" },
@@ -392,6 +447,16 @@ public:
     static inline std::vector<std::string> weaponNamesStrings = {};
     static inline std::vector<char*> weaponNames;
     static inline int32_t weapId = 0;
+    static inline bool freezeTime = false;
+
+    static void ChangePlayerComponent(ePedVarComp slotId, uint32_t model, uint32_t texture = 0) {
+        auto playa = FindPlayerPed(0);
+		int32_t ref = CPools::GetPedRef(playa);
+
+        plugin::scripting::CallCommandById<void>(
+            plugin::Commands::SET_CHAR_COMPONENT_VARIATION,
+			ref, slotId, model, texture);
+    }
 
     static void AddEntries() {
         // Time & Weather
@@ -438,8 +503,12 @@ public:
             }
         }, 0.1f, 0.0f, 100.0f);
 
+        static const char* boolstr[] = { "Off", "On" };
+        auto e = DebugMenuAddInt8("Time & Weather", "Freeze Game", (int8_t*)&freezeTime, []() { CTimer::m_UserPause = false; }, 1, 0, 1, boolstr);
+        DebugMenuEntrySetWrap(e, true);
+
         // Spawn | Ped
-        auto e = DebugMenuAddInt32("Spawn|Ped", "Spawn Ped ID", &pedId, nullptr, 1, 0, pedNames.size() - 1, (const char**)pedNames.data());
+        e = DebugMenuAddInt32("Spawn|Ped", "Spawn Ped ID", &pedId, nullptr, 1, 0, pedNames.size() - 1, (const char**)pedNames.data());
         DebugMenuEntrySetWrap(e, true);
         DebugMenuAddCmd("Spawn|Ped", "Spawn Ped", []() {
             SpawnPed(rage::atStringHash(pedNames[pedId], 0));
@@ -640,13 +709,57 @@ public:
         });
 
         // Player
-        static const char* boolstr[] = { "Off", "On" };
-        e = DebugMenuAddInt8("Player", "Invincible", (int8_t*)&godMode, nullptr, 1, 0, 1, boolstr);
+        e = DebugMenuAddInt8("Player", "Invincible", (int8_t*)&godMode, []() { FindPlayerPed(0)->m_bInvincible = false; }, 1, 0, 1, boolstr);
         DebugMenuEntrySetWrap(e, true);
-        DebugMenuAddCmd("Player", "Clear Wanted Level", []() { FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.m_WantedLevel = eWantedLevel::WANTED_CLEAN; });
+        e = DebugMenuAddInt8("Player", "Infinite Ammo/No Reload", (int8_t*)&infiniteAmmo, nullptr, 1, 0, 1, boolstr);
+        DebugMenuEntrySetWrap(e, true);
+
+        e = DebugMenuAddInt8("Player", "Peds ignore Player", (int8_t*)&pedsIgnorePlayer, []() {
+            FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.m_EverybodyBackOff = false;
+        }, 1, 0, 1, boolstr);
+        DebugMenuEntrySetWrap(e, true);
+
+        DebugMenuAddCmd("Player", "Clean clothes", []() {
+            plugin::scripting::CallCommandById<void>(plugin::Commands::RESET_VISIBLE_PED_DAMAGE, CPools::GetPedRef(FindPlayerPed(0))); 
+            SetDebugMessage("Clothes cleaned");
+        });
+
+        DebugMenuAddCmd("Player", "Clear Wanted Level", []() { FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.m_WantedLevel = eWantedLevel::WANTED_CLEAN; SetDebugMessage("Wanted level clear"); });
+        DebugMenuAddVarBool8("Player", "Never Wanted", &neverWanted, []() {
+            if (neverWanted)
+                SetDebugMessage("Never Wanted: On");
+            else
+                SetDebugMessage("Wanted level: Off");
+        });
+
         DebugMenuAddCmd("Player", "Give Money", []() { FindPlayerPed(0)->m_pPlayerInfo->m_nMoney += 10000; });
         DebugMenuAddCmd("Player", "Remove Money", []() { FindPlayerPed(0)->m_pPlayerInfo->m_nMoney -= 10000; });
 
+        static int32_t playerHead = 0;
+		static int32_t playerUppr = 0;
+		static int32_t playerLowr = 0;
+		static int32_t playerAccs = 0;
+        static int32_t playerHand = 0;
+        static int32_t playerFeet = 0;
+        static int32_t playerJacket = 0;
+        static int32_t playerHair = 0;
+        static int32_t playerDecl = 0;
+        static int32_t playerTeeth = 0;
+        static int32_t playerFace = 0;
+
+        DebugMenuAddInt32("Player|Clothes", "Head", &playerHead, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_HEAD, playerHead); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Upper Body", &playerUppr, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_UPPR, playerUppr); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Lower Body", &playerLowr, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_LOWR, playerLowr); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Accessories", &playerAccs, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_ACCS, playerAccs); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Hand", &playerHand, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_HAND, playerHand); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Feet", &playerFeet, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_FEET, playerFeet); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Jacket", &playerJacket, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_JBIB, playerJacket); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Hair", &playerHair, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_HAIR, playerHair); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Decals", &playerDecl, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_DECL, playerDecl); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Teeth", &playerTeeth, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_TEETH, playerTeeth); }, 1, 0, 32, nullptr);
+        DebugMenuAddInt32("Player|Clothes", "Face", &playerFace, []() { ChangePlayerComponent(ePedVarComp::PV_COMP_FACE, playerFace); }, 1, 0, 32, nullptr);
+
+        // Weapon
         e = DebugMenuAddInt32("Weapon", "Get Weapon ID", &weapId, nullptr, 1, 0, weaponNames.size() - 1, (const char**)weaponNames.data());
         DebugMenuEntrySetWrap(e, true);
         DebugMenuAddCmd("Weapon", "Get Weapon", []() {
@@ -655,12 +768,15 @@ public:
                 GiveWeapon(playa, rage::atStringHash(weaponNames[weapId], 0), 1000);
         });
 
+
         // Vehicle
         DebugMenuAddCmd("Vehicle", "Fix", []() { 
             auto vehicle = FindPlayerVehicle(0);
             if (vehicle) {
                 vehicle->Fix();
                 vehicle->SetHealth(1000.0f, 0);
+
+                SetDebugMessage("Vehicle fixed");
             }
         });
 
@@ -671,8 +787,14 @@ public:
                 rot.y -= rage::pi();
                 vehicle->m_pMatrix->SetRotate(rot);
                 vehicle->Teleport(&vehicle->GetPosition(), 0, 1);
+
+                SetDebugMessage("Vehicle flipped");
             }
         });
+
+        DebugMenuAddVarBool8("Vehicle", "Invincible", &vehicleGodMode, []() { if (vehicleGodMode && FindPlayerVehicle(0)) FindPlayerVehicle(0)->Fix(); });
+
+        DebugMenuAddCmd("Vehicle", "Clean vehicle", []() { if (FindPlayerVehicle(0)) { FindPlayerVehicle(0)->m_fDirtLevel = 0.0f; SetDebugMessage("Vehicle cleaned"); } });
 
         // Debug
         e = DebugMenuAddCmd("Debug|Camera", "Toggle Debug Camera", []() {
@@ -686,13 +808,15 @@ public:
         }, 1, 0, 1, controlStr);
         DebugMenuEntrySetWrap(e, true);
         DebugMenuAddVar("Debug", "FOV", &fov, nullptr, 1.0f, 5.0f, 180.0f);
-        DebugMenuAddCmd("Debug", "Save Camera Position", []() { SaveCam(TheCamera.m_pCamGame); });
-        DebugMenuAddCmd("Debug", "Cycle Next", []() { NextSavedCam(TheCamera.m_pCamGame); });
-        DebugMenuAddCmd("Debug", "Cycle Prev", []() { PrevSavedCam(TheCamera.m_pCamGame); });
+        DebugMenuAddCmd("Debug", "Save Camera Position", []() { SaveCam(TheCamera.m_pCamFinal); });
+        DebugMenuAddCmd("Debug", "Cycle Next", []() { NextSavedCam(TheCamera.m_pCamFinal); });
+        DebugMenuAddCmd("Debug", "Cycle Prev", []() { PrevSavedCam(TheCamera.m_pCamFinal); });
         DebugMenuAddCmd("Debug", "Delete Camera Positions", DeleteSavedCams);
 
         DebugMenuAddVarBool8("Debug", "Disable HUD", &CHud::HideAllComponents, nullptr);
         DebugMenuAddVarBool8("Debug", "Show Player Coords", &playerCoords, nullptr);
+        DebugMenuAddVarBool8("Debug", "Show Cam Mode", &drawCamMode, nullptr);
+
         DebugMenuAddVarBool8("Debug", "Draw Camera Overlay", &drawCameraOverlay, []() {
             if (drawCameraOverlay)
                 CCutsceneMgr::LoadSprites();
@@ -719,17 +843,26 @@ public:
                 auto trace = CRadar::ms_RadarTrace[i];
         
                 if (trace) {
+                    auto playa = FindPlayerPed(0);
                     rage::Vector3 blipPos = CRadar::ms_RadarTrace[i]->m_vPos;
                     rage::Vector4 pos;
                     pos.x = blipPos.x;
                     pos.y = blipPos.y;
-                    pos.z = blipPos.z;
+                    pos.z = 1000.0f;
         
                     pos.z = CWorld::FindGroundZForCoord(pos.x, pos.y);
-                    auto playa = FindPlayerPed(0);
+                    if (pos.z == 0.0f)
+                        pos.z = playa->GetPosition().z;
+
                     playa->Teleport(&pos, 0, 1);
+
+                    SetDebugMessage("Teleported to waypoint");
                 }
             }
+        });
+
+        DebugMenuAddCmd("Misc", "Save game", []() {
+            plugin::scripting::CallCommandById<void>(plugin::Commands::ACTIVATE_SAVE_MENU);
         });
 
         e = DebugMenuAddInt32("Script", "Mission select", &scriptId, nullptr, 1, 0, scriptNames.size() - 1, (const char**)scriptNames.data());
@@ -749,7 +882,7 @@ public:
                 CStreaming::RequestScript(index, 0x14);
                 CStreaming::LoadAllRequestedModels(0);
                 auto playa = FindPlayerPed(0);
-                if (playa && playa->CanStartMission())
+                if (playa && !plugin::scripting::CallCommandById<bool>(plugin::Commands::GET_MISSION_FLAG))
                     CTheScripts::StartScript(name, 0, 0, 1024);
                 CStreaming::SetIsModelDeletable(index, CFileTypeMgr::IndexOfType_SCO);
             }
@@ -780,28 +913,75 @@ public:
             if (playa) {
                 rage::Vector4 pos = interiorPosList[interiorId];
                 playa->Teleport(&pos, 0, 1);
+
+                SetDebugMessage("Teleported to location");
             }
+        });
+
+        static bool mobileRadio = false;
+        DebugMenuAddCmd("Misc", "Mobile Radio Toggle", []() {
+            mobileRadio ^= 1;
+            if (mobileRadio) {
+                plugin::scripting::CallCommandById<void>(plugin::Commands::ENABLE_FRONTEND_RADIO, mobileRadio);
+                plugin::scripting::CallCommandById<void>(plugin::Commands::SET_MOBILE_RADIO_ENABLED_DURING_GAMEPLAY, mobileRadio);
+                plugin::scripting::CallCommandById<void>(plugin::Commands::SET_MOBILE_PHONE_RADIO_STATE, mobileRadio);
+                SetDebugMessage("Mobile radio: On");
+            }
+            else {
+                plugin::scripting::CallCommandById<void>(plugin::Commands::DISABLE_FRONTEND_RADIO, mobileRadio);
+                plugin::scripting::CallCommandById<void>(plugin::Commands::SET_MOBILE_RADIO_ENABLED_DURING_GAMEPLAY, mobileRadio);
+                plugin::scripting::CallCommandById<void>(plugin::Commands::SET_MOBILE_PHONE_RADIO_STATE, mobileRadio);
+                SetDebugMessage("Mobile radio: Off");
+            }
+        });
+
+        DebugMenuAddCmd("Misc", "Retune Radio Up", []() {
+            plugin::scripting::CallCommandById<void>(plugin::Commands::RETUNE_RADIO_UP);
+        });
+
+        DebugMenuAddCmd("Misc", "Retune Radio Down", []() {
+            plugin::scripting::CallCommandById<void>(plugin::Commands::RETUNE_RADIO_DOWN);
+        });
+
+        DebugMenuAddCmd("Misc", "Skip Radio Forward", []() {
+            plugin::scripting::CallCommandById<void>(plugin::Commands::SKIP_RADIO_FORWARD);
         });
     }
 
     static void ToggleDebugCam() {
-        CCam* cam = TheCamera.m_pCamFollowVeh;
-
-        if (!cam)
-            cam = TheCamera.m_pCamFollowPed;
-
-        if (!cam)
-            return;
+        if (plugin::scripting::CallCommandById<bool>(plugin::Commands::ARE_WIDESCREEN_BORDERS_ACTIVE))
+			return;
 
         LoadSavedCams();
         debugCamera ^= 1;
-        cam->m_bActive = !debugCamera;
         ToggleControls(debugCamera && controlMode == 0);
+
+        CCam* cam = TheCamera.m_pCamGame;
+        cam->m_bActive = !debugCamera;
+        for (int32_t i = 0; i < eCamMode::NUM_CAM_MODES; i++) {
+            auto c = cam->GetCamMode((eCamMode)i, 0);
+
+            if (c) {
+                c->m_bActive = !debugCamera;
+                auto c1 = c->m_pNext;
+
+                if (c1)
+                    c1->m_bActive = !debugCamera;
+            }
+        }
+
+        if (debugCamera)
+            SetDebugMessage("Debug camera: On");
+        else
+            SetDebugMessage("Debug camera: Off");
     }
 
     static void ToggleControls(bool disabled) {
+        if (DebugMenuShowing() && !disabled)
+            return;
+
         auto playa = FindPlayerPed(0);
-        auto cam = TheCamera.m_pCamGame;
+        auto cam = TheCamera.m_pCamFinal;
         if (cam) {
             if (playa) {
                 playa->m_pPlayerInfo->m_bDisableControls = disabled;
@@ -825,6 +1005,8 @@ public:
         bool left = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_A, 2, 0);
         bool right = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_D, 2, 0);
         bool control = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_LCONTROL, 2, 0) || CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RCONTROL, 2, 0);
+        bool shift = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_LSHIFT, 2, 0) || CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RSHIFT, 2, 0);
+
         bool enter = CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_RETURN, 2, 0);
         bool up = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_UP, 2, 0);
         bool down = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_DOWN, 2, 0);
@@ -832,12 +1014,31 @@ public:
         int32_t mouseX = 0, mouseY = 0;
         CPad::GetMouseInput(&mouseX, &mouseY);
 
-        auto cam = TheCamera.m_pCamGame;
+        auto cam = TheCamera.m_pCamFinal;
         if (!cam)
             return;
 
+        for (int32_t i = 0; i < eCamMode::NUM_CAM_MODES; i++) {
+            auto c = cam->GetCamMode((eCamMode)i, 0);
+        
+            if (c) {
+                c->m_bActive = false;
+                auto c1 = c->m_pNext;
+        
+                if (c1)
+                    c1->m_bActive = false;
+            }
+        }
+        cam->m_bActive = true;
+
         rage::Matrix44 mat = cam->m_mMatrix;
         rage::Vector3 rot = cam->m_mMatrix.GetRotation();
+
+        float dt = (CTimer::GetTimeInMilliseconds() - CTimer::GetPreviousTimeInMilliseconds()) / 1000.0f;
+
+        if (CTimer::GetUserPause()) {
+            dt = (CTimer::GetTimeInMillisecondsPauseMode() - CTimer::GetPreviousTimeInMillisecondsPauseMode()) / 1000.0f;
+        }
 
         static float speed = 0.0f;
         static float panspeedX = 0.0f;
@@ -847,61 +1048,89 @@ public:
 
         rage::Vector3 angle = cam->m_mMatrix.GetRotation();
 
+        float baseAccel = 30.0f;
+        float maxSpeed = 50.0f;
+        float friction = 150.0f;
+
+        if (shift) {
+            maxSpeed *= 4.0f;
+            baseAccel *= 4.0f;
+        }
+        if (control) {
+            maxSpeed *= 0.25f;
+            baseAccel *= 0.25f;
+        }
+
         if (controlsEnabled) {
             if (lmb) {
                 angle.z -= mouseX * rotationSpeed;
                 angle.x -= mouseY * rotationSpeed;
             }
 
-            if (forward)
-                speed += 0.01f;
-            else if (backward)
-                speed -= 0.01f;
-            else
-                speed = 0.0f;
-
-            if (left)
-                panspeedX -= 0.01f;
-            else if (right)
-                panspeedX += 0.01f;
-            else
-                panspeedX = 0.0f;
-
-            if (down)
-                panspeedY -= 0.01f;
-            else if (up)
-                panspeedY += 0.01f;
-            else
-                panspeedY = 0.0f;
-
-            if (control) {
-                if (speed > 0.25f) speed = 0.25f;
-                if (speed < -0.25f) speed = -0.25f;
-            
-                if (panspeedX > 0.25f) panspeedX = 0.25f;
-                if (panspeedX < -0.25f) panspeedX = -0.25f;
-            
-                if (panspeedY > 0.25f) panspeedY = 0.25f;
-                if (panspeedY < -0.25f) panspeedY = -0.25f;
+            if (forward) {
+                speed += baseAccel * dt;
+                if (speed > maxSpeed) speed = maxSpeed;
+            }
+            else if (backward) {
+                speed -= baseAccel * dt;
+                if (speed < -maxSpeed) speed = -maxSpeed;
             }
             else {
-                if (speed > 50.0f) speed = 50.0f;
-                if (speed < -50.0f) speed = -50.0f;
-            
-                if (panspeedX > 50.0f) panspeedX = 50.0f;
-                if (panspeedX < -50.0f) panspeedX = -50.0f;
-            
-                if (panspeedY > 50.0f) panspeedY = 50.0f;
-                if (panspeedY < -50.0f) panspeedY = -50.0f;
+                if (speed > 0.0f) {
+                    speed -= friction * dt;
+                    if (speed < 0.0f) speed = 0.0f;
+                }
+                else if (speed < 0.0f) {
+                    speed += friction * dt;
+                    if (speed > 0.0f) speed = 0.0f;
+                }
+            }
+
+            if (left) {
+                panspeedX -= baseAccel * dt;
+                if (panspeedX < -maxSpeed) panspeedX = -maxSpeed;
+            }
+            else if (right) {
+                panspeedX += baseAccel * dt;
+                if (panspeedX > maxSpeed) panspeedX = maxSpeed;
+            }
+            else {
+                if (panspeedX > 0.0f) {
+                    panspeedX -= friction * dt;
+                    if (panspeedX < 0.0f) panspeedX = 0.0f;
+                }
+                else if (panspeedX < 0.0f) {
+                    panspeedX += friction * dt;
+                    if (panspeedX > 0.0f) panspeedX = 0.0f;
+                }
+            }
+
+            if (down) {
+                panspeedY -= baseAccel * dt;
+                if (panspeedY < -maxSpeed) panspeedY = -maxSpeed;
+            }
+            else if (up) {
+                panspeedY += baseAccel * dt;
+                if (panspeedY > maxSpeed) panspeedY = maxSpeed;
+            }
+            else {
+                if (panspeedY > 0.0f) {
+                    panspeedY -= friction * dt;
+                    if (panspeedY < 0.0f) panspeedY = 0.0f;
+                }
+                else if (panspeedY < 0.0f) {
+                    panspeedY += friction * dt;
+                    if (panspeedY > 0.0f) panspeedY = 0.0f;
+                }
             }
         }
 
         mat.SetRotate(angle);
 
         if (controlsEnabled) {
-            mat.pos += mat.up * speed;
-            mat.pos += mat.right * panspeedX;
-            mat.pos += mat.at * panspeedY;
+            mat.pos += mat.up * speed * dt;
+            mat.pos += mat.right * panspeedX * dt;
+            mat.pos += mat.at * panspeedY * dt;
         }
 
         cam->m_fFOV = fov;
@@ -914,10 +1143,12 @@ public:
         if (enter) {
             if (vehicle) {
                 vehicle->Teleport(&teleportPos, 0, 1);
-                vehicle->SetInitialVelocity({ 0.0f,0.0f,0.0f });
+                vehicle->SetInitialVelocity({ 0.0f, 0.0f, 0.0f });
             }
             else
                 playa->Teleport(&teleportPos, 0, 1);
+
+            SetDebugMessage("Teleported");
         }
     }
 
@@ -978,7 +1209,13 @@ public:
             AddEntries();
         };
 
+        static uint32_t rendered = 0;
         plugin::Events::drawHudEvent += []() {
+            if (rendered++ > 0) {
+                rendered = 0;
+                return;
+            }
+
             if (playerCoords) {
                 auto base = new T_CB_Generic_NoArgs([]() {
                     char buf[64];
@@ -989,9 +1226,70 @@ public:
                 base->Init();
             }
 
+            if (drawCamMode) {
+                static const char* camModes[] = {
+                    "CAM_SKELETON",
+                    "CAM_FOLLOW_PED" ,
+                    "CAM_FOLLOW_VEHICLE" ,
+                    "CAM_INTERP",
+                    "CAM_SHAKE",
+                    "CAM_FINAL",
+                    "CAM_SCRIPT",
+                    "CAM_GAME",
+                    "CAM_TRANS",
+                    "CAM_AIM_WEAPON",
+                    "CAM_BUSTED",
+                    "CAM_PHOTO",
+                    "CAM_IDLE",
+                    "CAM_2_PLAYER",
+                    "CAM_SCRIPTED",
+                    "CAM_CUTSCENE",
+                    "CAM_WASTED",
+                    "CAM_1ST_PERSON",
+                    "CAM_2_PLAYER_VEH",
+                    "CAM_AIM_WEAPON_VEH",
+                    "CAM_VIEWPORTS",
+                    "CAM_HISTORY",
+                    "CAM_CINEMATIC",
+                    "CAM_CINEMATIC_HELI_CHASE",
+                    "CAM_CINEMATIC_CAM_MAN",
+                    "CAM_SPLINE",
+                    "CAM_CINEMATOGRAPHY",
+                    "CAM_FPS_WEAPON",
+                    "CAM_FIRE_TRUCK",
+                    "CAM_RADAR",
+                    "CAM_WEAPON_AIMING",
+                    "CAM_ANIMATED",
+                    "CAM_INTERMEZZO",
+                    "CAM_VIEW_SEQ",
+                    "CAM_VIEWFIND",
+                    "CAM_PLAYER_SETTINGS",
+                    "CAM_CINEMATIC_VEH_OFFSET",
+                    "CAM_REPLAY,",
+                    "CAM_FREE",
+                    "CAM_DEBUG",
+                    "CAM_MARKET",
+                    "CAM_SECTOR",
+                };
+                auto base = new T_CB_Generic_NoArgs([]() {
+                    char buf[64];
+                    auto cam = TheCamera.m_pCamGame->m_pCurrentCamera;
+                    sprintf(buf, "%s", camModes[cam->GetCurrentCamMode()]);
+                    DebugMenuPrintString(buf, 0.0f, playerCoords ? 20.0f : 0.0f, 0);
+                });
+                base->Init();
+            }
+
             if (drawCameraOverlay) {
                 auto base = new T_CB_Generic_NoArgs([]() {
                     plugin::CallDyn(plugin::pattern::Get("83 EC 30 FF 35"));
+                });
+                base->Init();
+            }
+        
+            {
+                auto base = new T_CB_Generic_NoArgs([]() {
+                    DrawDebugMessage();
                 });
                 base->Init();
             }
@@ -1001,13 +1299,60 @@ public:
             if (CMenuManager::m_MenuActive)
                 return;
 
+            if (DebugMenuShowing()) {
+                plugin::scripting::CallCommandById<void>(plugin::Commands::HIDE_HELP_TEXT_THIS_FRAME);
+            }
+
             if ((CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_LCONTROL, 2, 0) ||
                 CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RCONTROL, 2, 0)) &&
                 CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_B, 2, 0))
                 ToggleDebugCam();
 
+            if (controlMode == 0 && debugCamera) {
+                if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_Z, 2, 0))
+                    SaveCam(TheCamera.m_pCamFinal);
+                if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_X, 2, 0))
+                    DeleteSavedCams();
+                if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_Q, 2, 0))
+                    PrevSavedCam(TheCamera.m_pCamFinal);
+                if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_E, 2, 0))
+					NextSavedCam(TheCamera.m_pCamFinal);
+            }
+
             auto playa = FindPlayerPed(0);
-            playa->m_bInvincible = godMode;
+
+            if (godMode)
+                playa->m_bInvincible = true;
+
+            if (vehicleGodMode) {
+                auto vehicle = FindPlayerVehicle(0);
+                if (vehicle) {
+                    vehicle->m_bInvincible = true;
+                    vehicle->m_bCanBeVisiblyDamaged = false;
+                    vehicle->SetHealth(1000.0f, 0);
+				}
+            }
+
+            if (infiniteAmmo) {
+                auto ammoData = playa->m_WeaponData.GetAmmoDataExtraCheck();
+                if (ammoData) {
+					ammoData->m_nAmmoInClip = CWeaponInfo::GetWeaponInfo(ammoData->m_nType)->m_nClipSize;
+                    ammoData->m_nAmmoTotal = 25000;
+                }
+            }
+
+            if (neverWanted) {
+                FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.m_WantedLevel = eWantedLevel::WANTED_CLEAN;
+                FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.SetMaximumWantedLevel(eWantedLevel::WANTED_CLEAN);
+            }
+
+            if (pedsIgnorePlayer) {
+                playa->m_pPlayerInfo->m_PlayerData.m_Wanted.m_EverybodyBackOff = true;
+            }
+
+            if (freezeTime) {
+                CTimer::m_UserPause = true;
+            }
 
             ProcessDebugCam();
         };
