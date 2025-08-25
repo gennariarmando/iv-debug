@@ -12,7 +12,6 @@
 #include "CCamera.h"
 #include "CPad.h"
 #include "CPools.h"
-#include "CPad.h"
 #include "CWorld.h"
 #include "CModelInfo.h"
 #include "CVehicleFactoryNY.h"
@@ -30,7 +29,11 @@
 #include <map>
 #include "extensions\ScriptCommands.h"
 #include "CWeaponInfo.h"
-#include "audRadioStation.h"
+#include "CViewport.h"
+#include "CTxdStore.h"
+
+#include "dxsdk/d3d9.h"
+
 
 DebugMenuAPI gDebugMenuAPI;
 
@@ -44,6 +47,8 @@ public:
     static inline float fov = 45.0f;
     static inline bool godMode = false;
 	static inline bool infiniteAmmo = false;
+    static inline bool noReload = false;
+
     static inline bool pedsIgnorePlayer = false;
     static inline bool vehicleGodMode = false;
     static inline bool neverWanted = false;
@@ -53,28 +58,39 @@ public:
     static inline bool playerCoords = false;
     static inline bool drawCameraOverlay = false;
     static inline bool drawCamMode = false;
-
     
     static inline int32_t debugMessageTimer = 0;
     static inline std::string debugMessage = {};
 
     static void SetDebugMessage(std::string const& str) {
         debugMessage.assign(str);
-        debugMessageTimer = CTimer::GetTimeInMilliseconds() + 1500;
+
+        if (CTimer::m_UserPause)
+            debugMessageTimer = CTimer::GetTimeInMillisecondsPauseMode() + 1500;
+        else
+            debugMessageTimer = CTimer::GetTimeInMilliseconds() + 1500;
     }
 
     static void DrawDebugMessage() {
         if (debugMessage.empty())
             return;
 
-        if (debugMessageTimer > CTimer::GetTimeInMilliseconds()) {
-            float x = DebugMenuGetStringSize(debugMessage.c_str()) / 2;
-			x = (SCREEN_WIDTH / 2) - x;
-            DebugMenuPrintString(debugMessage.c_str(), x, SCREEN_HEIGHT - 100.0f, 0);
+        if (CTimer::m_UserPause) {
+            if (debugMessageTimer < CTimer::GetTimeInMillisecondsPauseMode()) {
+                debugMessage.clear();
+                return;
+            }
         }
         else {
-            debugMessage.clear();
+            if (debugMessageTimer < CTimer::GetTimeInMilliseconds()) {
+                debugMessage.clear();
+                return;
+            }
         }
+
+        float x = DebugMenuGetStringSize(debugMessage.c_str()) / 2;
+        x = (SCREEN_WIDTH / 2) - x;
+        DebugMenuPrintString(debugMessage.c_str(), x, SCREEN_HEIGHT - 100.0f, 0);
     }
 
     static void CallCheat(int32_t i) {
@@ -289,153 +305,159 @@ public:
     static inline std::vector<std::string> vehicleNamesStrings = {};
     static inline std::vector<char*> vehicleNames;
 
-    static inline std::pair<char*, char*> missionListTLAD[] = {
-        { "opening_credits", "Clean and Serene" },
-        { "Billy2", "Angels in America" },
-        { "Billy3", "It's War" },
-        { "Billy4", "Action/Reaction" },
-        { "Billy5", "Buyer's Market" },
-        { "Billy6", "Buyer's Market" },
-        { "Jim1", "Liberty City Choppers" },
-        { "Jim2", "Bad Cop Drop" },
-        { "Jim4", "Hit The Pipe" },
-        { "Jim5", "End Of Chapter" },
-        { "Jim6", "Bad Standing" },
-        { "Stubbs1", "Politics" },
-        { "Stubbs2", "Off Route" },
-        { "Stubbs3p", "Proc Odd Jobs" },
-        { "Stubbs4", "Get Lost" },
-        { "E1EndCredits", "TLAD Complete" },
-        { "Ashley1", "Coming Down" },
-        { "Ashley2", "Roman's Holiday" },
-        { "Elizabeta1", "Heavy Toll" },
-        { "Elizabeta2", "Marta Full Of Grace" },
-        { "Elizabeta3", "Shifting Weight" },
-        { "Ray1", "Diamonds In The Rough" },
-        { "Ray2", "Collector's Item" },
-        { "Ray3", "Was It Worth it?" },
-        { "Jim3p", "I Want One Of Those" },
+    struct MissionList {
+        char scriptName[32];
+		char fullName[256];
+        int32_t stackSize;
+	};
+
+    static inline MissionList missionListTLAD[] = {
+        { "opening_credits", "Clean and Serene", 1024 },
+        { "Billy2", "Angels in America", 1024 },
+        { "Billy3", "It's War", 1024 },
+        { "Billy4", "Action/Reaction", 1024 },
+        { "Billy5", "Buyer's Market", 1024 },
+        { "Billy6", "Buyer's Market", 1024 },
+        { "Jim1", "Liberty City Choppers", 1024 },
+        { "Jim2", "Bad Cop Drop", 1024 },
+        { "Jim4", "Hit The Pipe", 1024 },
+        { "Jim5", "End Of Chapter", 1024 },
+        { "Jim6", "Bad Standing", 1024 },
+        { "Stubbs1", "Politics", 1024 },
+        { "Stubbs2", "Off Route", 1024 },
+        { "Stubbs3p", "Proc Odd Jobs", 1024 },
+        { "Stubbs4", "Get Lost", 1024 },
+        { "E1EndCredits", "TLAD Complete", 1024 },
+        { "Ashley1", "Coming Down", 1024 },
+        { "Ashley2", "Roman's Holiday", 1024 },
+        { "Elizabeta1", "Heavy Toll", 1024 },
+        { "Elizabeta2", "Marta Full Of Grace", 1024 },
+        { "Elizabeta3", "Shifting Weight", 1024 },
+        { "Ray1", "Diamonds In The Rough", 1024 },
+        { "Ray2", "Collector's Item", 1024 },
+        { "Ray3", "Was It Worth it?", 1024 },
+        { "Jim3p", "I Want One Of Those", 1024 },
     };
 
-    static inline std::pair<char*, char*> missionListTBOGT[] = {
-        { "opening_credits", "I Luv LC" },
-        { "tony2", "Chinese Takeout" },
-        { "tony3", "Practice Swing" },
-        { "tony4a", "Blog This!..." },
-        { "tony5", "Bang Bang" },
-        { "tony4b", "...Blog This!" },
-        { "tony6", "Boulevard Baby" },
-        { "tony7", "Frosting On The Cake" },
-        { "tony8", "Not So Fast" },
-        { "tony9", "Ladies' Night" },
-        { "tony10", "Ladies Half Price" },
-        { "tony11", "Departure Time" },
-        { "E2EndCredits", "TBoGT Complete" },
-        { "brother1", "Kibbutz Number One" },
-        { "brother2", "This Ain't Checkers" },
-        { "brother3", "No. 3" },
-        { "yusuf1", "Sexy Time" },
-        { "yusuf2", "High Dive" },
-        { "yusuf3", "Caught With Your Pants Down" },
-        { "yusuf4", "For The Man Who Has Everything" },
-        { "friends1", "Corner Kids" },
-        { "friends2", "Clocking Off" },
-        { "mum1", "Momma's Boy" },
-        { "bulgarin1", "Going Deep" },
-        { "bulgarin2", "Dropping In" },
-        { "bulgarin3", "In The Crosshairs" },
-        { "rocco1", "Party's Over" },
+    static inline MissionList missionListTBOGT[] = {
+        { "opening_credits", "I Luv LC", 1024 },
+        { "tony2", "Chinese Takeout", 1024 },
+        { "tony3", "Practice Swing", 1024 },
+        { "tony4a", "Blog This!...", 1024 },
+        { "tony5", "Bang Bang", 1024 },
+        { "tony4b", "...Blog This!", 1024 },
+        { "tony6", "Boulevard Baby", 1024 },
+        { "tony7", "Frosting On The Cake", 1024 },
+        { "tony8", "Not So Fast", 1024 },
+        { "tony9", "Ladies' Night", 1024 },
+        { "tony10", "Ladies Half Price", 1024 },
+        { "tony11", "Departure Time", 1024 },
+        { "E2EndCredits", "TBoGT Complete", 1024 },
+        { "brother1", "Kibbutz Number One", 1024 },
+        { "brother2", "This Ain't Checkers", 1024 },
+        { "brother3", "No. 3", 1024 },
+        { "yusuf1", "Sexy Time", 1024 },
+        { "yusuf2", "High Dive", 1024 },
+        { "yusuf3", "Caught With Your Pants Down", 1024 },
+        { "yusuf4", "For The Man Who Has Everything", 1024 },
+        { "friends1", "Corner Kids", 1024 },
+        { "friends2", "Clocking Off", 1024 },
+        { "mum1", "Momma's Boy", 1024 },
+        { "bulgarin1", "Going Deep", 1024 },
+        { "bulgarin2", "Dropping In", 1024 },
+        { "bulgarin3", "In The Crosshairs", 1024 },
+        { "rocco1", "Party's Over", 1024 },
     };
 
-    static inline std::pair<char*, char*> missionListIV[] = {
-        { "Roman1", "The Cousins Bellic" },
-        { "Roman2", "It�s Your Call" },
-        { "Roman3", "Three�s a Crowd" },
-        { "Roman4", "Bleed out" },
-        { "Roman5", "Easy Fare" },
-        { "Roman6", "Jamaican Heat" },
-        { "Roman7", "Uncle Vlad" },
-        { "Roman8p", "Taxi Mission" },
-        { "Roman9", "Logging On" },
-        { "Roman10p", "Steal Banshee for Brucie" },
-        { "Roman11", "Roman�s Sorrow" },
-        { "Roman12", "Hostile Negotiation" },
-        { "Michelle1", "First Date" },
-        { "Vlad1", "Bull in a China Shop" },
-        { "Vlad2", "Hung out to Dry" },
-        { "Vlad3", "Clean Getaway" },
-        { "Vlad4", "Ivan the Not So Terrible" },
-        { "Jacob1", "Concrete Jungle" },
-        { "Jacob2", "Shadow" },
-        { "Jacob3p", "Drug delivery Mission" },
-        { "Faustin1", "Crime and Punishment" },
-        { "Faustin2", "Do You Have Protection?" },
-        { "Faustin3", "Final Destination" },
-        { "Faustin4", "No Love Lost" },
-        { "Faustin5", "Rigged to Blow" },
-        { "Faustin6", "The Master and the Molotov (Dimitri)" },
-        { "Faustin7", "Russian Revolution (Dimitri)" },
-        { "Brucie1", "Search and Delete" },
-        { "Brucie2", "Easy as Can Be" },
-        { "Brucie3a", "Out of the Closet" },
-        { "Brucie4", "Nr. 1" },
-        { "Manny1", "Escuela of the Streets" },
-        { "Manny2", "Street Sweeper" },
-        { "Manny3", "The Puerto Rican Connection" },
-        { "Elizabeta1", "Luck of the Irish" },
-        { "Elizabeta2", "Blow your Cover" },
-        { "Elizabeta3", "The Snow Storm" },
-        { "Elizabeta4", "Have a Heart" },
-        { "Playboy2", "Deconstruction for Beginners" },
-        { "Playboy3", "Photo Shoot" },
-        { "Playboy4", "The Holland Play" },
-        { "Dwayne1", "Ruff Rider" },
-        { "Dwayne3", "Undress to Kill" },
-        { "Francis1", "Call and Collect" },
-        { "Francis2a", "Final Interview" },
-        { "Francis3", "Holland Nights" },
-        { "Francis4", "Lure" },
-        { "Francis5", "Blood Brothers" },
-        { "Packie1", "Harboring a Grudge" },
-        { "Packie2", "Waste Not Want Knots" },
-        { "Packie3", "Three Leaf Clover" },
-        { "UlPaper1", "Wrong is Right" },
-        { "UlPaper2", "Portrait of a Killer" },
-        { "UlPaper3", "Dust off" },
-        { "UlPaper4", "Paper Trial" },
-        { "Ray1", "A long Way to Fall" },
-        { "Ray2", "Taking in the Trash" },
-        { "Ray3", "Meltdown" },
-        { "Ray4", "Museum Piece" },
-        { "Ray5", "No Way on the Subway" },
-        { "Ray6", "Late Checkout" },
-        { "Bernie1", "Hating the Haters" },
-        { "Bernie2", "Union Drive" },
-        { "Bernie3", "Buoys Ahoy" },
-        { "Gerry1", "Action Speak Louder Than Words" },
-        { "Gerry2", "I need your Clothes, Your Boots and Your Motorcycle" },
-        { "Gerry3", "Unknown Mission 1" },
-        { "Gerry4", "Unknown Mission 2" },
-        { "Gerry5", "Unknown Mission 3" },
-        { "Derrick1", "Smackdown" },
-        { "Derrick2", "Babysitting" },
-        { "Derrick3", "Tunnel of Death" },
-        { "Phil1", "Catch the Wave" },
-        { "Phil2", "Kill mission" },
-        { "Phil3", "Trespass" },
-        { "Phil4", "Truck Hustle" },
-        { "Phil5", "To Live and Die in Alderney" },
-        { "Jimmy1", "Unknown Mission 1" },
-        { "Jimmy2", "Payback" },
-        { "Jimmy3", "Unknown Mission 3" },
-        { "Jimmy4", "Pest Control" },
-        { "Gambetti1", "Entourage" },
-        { "Gambetti2", "Dining Out" },
-        { "Gambetti3", "Liquidize the Assests" },
-        { "Finale1a", "One Last Thing" },
-        { "Finale2", "A Dish served cold" },
-        { "Finale3", "Wedding" },
-        { "Finale5", "Out of Commission"}
+    static inline MissionList missionListIV[] = {
+        { "initial", "The Cousins Bellic", 1024 },
+        { "Roman2", "It's Your Call", 1024 },
+        { "Roman3", "Three's a Crowd", 1024 },
+        { "Roman4", "Bleed out", 1024 },
+        { "Roman5", "Easy Fare", 1024 },
+        { "Roman6", "Jamaican Heat", 1024 },
+        { "Roman7", "Uncle Vlad", 1024 },
+        { "Roman8p", "Taxi Mission", 1024 },
+        { "Roman9", "Logging On", 1024 },
+        { "Roman10p", "Steal Banshee for Brucie", 1024 },
+        { "Roman11", "Roman's Sorrow", 1024 },
+        { "Roman12", "Hostile Negotiation", 1024 },
+        { "Michelle1", "First Date", 1024 },
+        { "Vlad1", "Bull in a China Shop", 1024 },
+        { "Vlad2", "Hung out to Dry", 1024 },
+        { "Vlad3", "Clean Getaway", 1024 },
+        { "Vlad4", "Ivan the Not So Terrible", 1024 },
+        { "Jacob1", "Concrete Jungle", 1024 },
+        { "Jacob2", "Shadow", 1024 },
+        { "Jacob3p", "Drug delivery Mission", 1024 },
+        { "Faustin1", "Crime and Punishment", 1024 },
+        { "Faustin2", "Do You Have Protection?", 1024 },
+        { "Faustin3", "Final Destination", 1024 },
+        { "Faustin4", "No Love Lost", 1024 },
+        { "Faustin5", "Rigged to Blow", 1024 },
+        { "Faustin6", "The Master and the Molotov (Dimitri)", 1024 },
+        { "Faustin7", "Russian Revolution (Dimitri)", 1024 },
+        { "Brucie1", "Search and Delete", 1024 },
+        { "Brucie2", "Easy as Can Be", 1024 },
+        { "Brucie3a", "Out of the Closet", 1024 },
+        { "Brucie4", "Nr. 1", 1024 },
+        { "Manny1", "Escuela of the Streets", 1024 },
+        { "Manny2", "Street Sweeper", 1024 },
+        { "Manny3", "The Puerto Rican Connection", 1024 },
+        { "Elizabeta1", "Luck of the Irish", 1024 },
+        { "Elizabeta2", "Blow your Cover", 1024 },
+        { "Elizabeta3", "The Snow Storm", 1024 },
+        { "Elizabeta4", "Have a Heart", 1024 },
+        { "Playboy2", "Deconstruction for Beginners", 1024 },
+        { "Playboy3", "Photo Shoot", 1024 },
+        { "Playboy4", "The Holland Play", 1024 },
+        { "Dwayne1", "Ruff Rider", 1024 },
+        { "Dwayne3", "Undress to Kill", 1024 },
+        { "Francis1", "Call and Collect", 1024 },
+        { "Francis2a", "Final Interview", 1024 },
+        { "Francis3", "Holland Nights", 1024 },
+        { "Francis4", "Lure", 1024 },
+        { "Francis5", "Blood Brothers", 1024 },
+        { "Packie1", "Harboring a Grudge", 1024 },
+        { "Packie2", "Waste Not Want Knots", 1024 },
+        { "Packie3", "Three Leaf Clover", 1024 },
+        { "UlPaper1", "Wrong is Right", 1024 },
+        { "UlPaper2", "Portrait of a Killer", 1024 },
+        { "UlPaper3", "Dust off", 1024 },
+        { "UlPaper4", "Paper Trial", 1024 },
+        { "Ray1", "A long Way to Fall", 1024 },
+        { "Ray2", "Taking in the Trash", 1024 },
+        { "Ray3", "Meltdown", 1024 },
+        { "Ray4", "Museum Piece", 1024 },
+        { "Ray5", "No Way on the Subway", 1024 },
+        { "Ray6", "Late Checkout", 1024 },
+        { "Bernie1", "Hating the Haters", 1024 },
+        { "Bernie2", "Union Drive", 1024 },
+        { "Bernie3", "Buoys Ahoy", 1024 },
+        { "Gerry1", "Action Speak Louder Than Words", 1024 },
+        { "Gerry2", "I need your Clothes, Your Boots and Your Motorcycle", 1024 },
+        { "Gerry3", "Unknown Mission 1", 1024 },
+        { "Gerry4", "Unknown Mission 2", 1024 },
+        { "Gerry5", "Unknown Mission 3", 1024 },
+        { "Derrick1", "Smackdown", 1024 },
+        { "Derrick2", "Babysitting", 1024 },
+        { "Derrick3", "Tunnel of Death", 1024 },
+        { "Phil1", "Catch the Wave", 1024 },
+        { "Phil2", "Kill mission", 1024 },
+        { "Phil3", "Trespass", 1024 },
+        { "Phil4", "Truck Hustle", 1024 },
+        { "Phil5", "To Live and Die in Alderney", 1024 },
+        { "Jimmy1", "Unknown Mission 1", 1024 },
+        { "Jimmy2", "Payback", 1024 },
+        { "Jimmy3", "Unknown Mission 3", 1024 },
+        { "Jimmy4", "Pest Control", 1024 },
+        { "Gambetti1", "Entourage", 1024 },
+        { "Gambetti2", "Dining Out", 1024 },
+        { "Gambetti3", "Liquidize the Assests", 1024 },
+        { "Finale1a", "One Last Thing", 1024 },
+        { "Finale2", "A Dish served cold", 1024 },
+        { "Finale3", "Wedding", 1024 },
+        { "Finale5", "Out of Commission", 1024 }
     };
 
     static inline int32_t scriptId = 0;
@@ -711,7 +733,10 @@ public:
         // Player
         e = DebugMenuAddInt8("Player", "Invincible", (int8_t*)&godMode, []() { FindPlayerPed(0)->m_bInvincible = false; }, 1, 0, 1, boolstr);
         DebugMenuEntrySetWrap(e, true);
-        e = DebugMenuAddInt8("Player", "Infinite Ammo/No Reload", (int8_t*)&infiniteAmmo, nullptr, 1, 0, 1, boolstr);
+        e = DebugMenuAddInt8("Player", "Infinite Ammo", (int8_t*)&infiniteAmmo, nullptr, 1, 0, 1, boolstr);
+        DebugMenuEntrySetWrap(e, true);
+        e = DebugMenuAddVarBool8("Player", "No reload", &noReload, nullptr);
+
         DebugMenuEntrySetWrap(e, true);
 
         e = DebugMenuAddInt8("Player", "Peds ignore Player", (int8_t*)&pedsIgnorePlayer, []() {
@@ -865,16 +890,24 @@ public:
             plugin::scripting::CallCommandById<void>(plugin::Commands::ACTIVATE_SAVE_MENU);
         });
 
+        DebugMenuAddCmd("Misc", "Prostitute Cam", []() {
+            CCamFollowVehicle::bProstituteCam ^= true;
+        });
+
         e = DebugMenuAddInt32("Script", "Mission select", &scriptId, nullptr, 1, 0, scriptNames.size() - 1, (const char**)scriptNames.data());
         DebugMenuEntrySetWrap(e, true);
 
         DebugMenuAddCmd("Script", "Start mission script", []() {
-            const char* name = missionListIV[scriptId].first;
+            const char* name = missionListIV[scriptId].scriptName;
+            int32_t stackSize = missionListIV[scriptId].stackSize;
+
             if (CMenuManager::m_Episode  == EPISODE_TLAD) {
-                name = missionListTLAD[scriptId].first;
+                name = missionListTLAD[scriptId].scriptName;
+                stackSize = missionListTLAD[scriptId].stackSize;
             }
             else if (CMenuManager::m_Episode  == EPISODE_TBOGT) {
-                name = missionListTBOGT[scriptId].first;
+                name = missionListTBOGT[scriptId].scriptName;
+                stackSize = missionListTBOGT[scriptId].stackSize;
             }
 
             int32_t index = CTheScripts::GetScriptIndex(name);
@@ -883,7 +916,7 @@ public:
                 CStreaming::LoadAllRequestedModels(0);
                 auto playa = FindPlayerPed(0);
                 if (playa && !plugin::scripting::CallCommandById<bool>(plugin::Commands::GET_MISSION_FLAG))
-                    CTheScripts::StartScript(name, 0, 0, 1024);
+                    CTheScripts::StartScript(name, 0, 0, stackSize);
                 CStreaming::SetIsModelDeletable(index, CFileTypeMgr::IndexOfType_SCO);
             }
         });
@@ -946,6 +979,22 @@ public:
         DebugMenuAddCmd("Misc", "Skip Radio Forward", []() {
             plugin::scripting::CallCommandById<void>(plugin::Commands::SKIP_RADIO_FORWARD);
         });
+
+        DebugMenuAddCmd("Misc", "Fancy Water", []() {
+			static bool fancyWater = false;
+			fancyWater ^= 1;
+            plugin::scripting::CallCommandById<void>(plugin::Commands::ENABLE_FANCY_WATER, fancyWater);
+			SetDebugMessage(fancyWater ? "Fancy water: On" : "Fancy water: Off");
+        });
+    }
+
+    static void SetDebugCamAndFreezeTime(bool on) {
+        LoadSavedCams();
+        ToggleDebugCam();
+        freezeTime = debugCamera;
+        CTimer::m_UserPause = false;
+
+        ToggleControls(debugCamera && controlMode == 0);
     }
 
     static void ToggleDebugCam() {
@@ -1192,17 +1241,17 @@ public:
 
             if (CMenuManager::m_Episode == EPISODE_IV) {
                 for (auto& it : missionListIV) {
-                    scriptNames.push_back(it.second);
+                    scriptNames.push_back(it.fullName);
                 }
             }
             else if (CMenuManager::m_Episode == EPISODE_TLAD) {
                 for (auto& it : missionListTLAD) {
-                    scriptNames.push_back(it.second);
+                    scriptNames.push_back(it.fullName);
                 }
             }
-            else if (CMenuManager::m_Episode  == EPISODE_TBOGT) {
+            else if (CMenuManager::m_Episode == EPISODE_TBOGT) {
                 for (auto& it : missionListTBOGT) {
-                    scriptNames.push_back(it.second);
+                    scriptNames.push_back(it.fullName);
                 }
             }
 
@@ -1286,7 +1335,7 @@ public:
                 });
                 base->Init();
             }
-        
+
             {
                 auto base = new T_CB_Generic_NoArgs([]() {
                     DrawDebugMessage();
@@ -1304,9 +1353,16 @@ public:
             }
 
             if ((CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_LCONTROL, 2, 0) ||
-                CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RCONTROL, 2, 0)) &&
+                 CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RCONTROL, 2, 0)) &&
                 CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_B, 2, 0))
                 ToggleDebugCam();
+
+            if ((CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_LCONTROL, 2, 0) ||
+                 CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RCONTROL, 2, 0)) &&
+                CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_V, 2, 0)) {
+                SetDebugCamAndFreezeTime(!freezeTime);
+                SetDebugMessage("Freeze time + Debug camera : " + std::string(freezeTime ? "On" : "Off"));
+            }
 
             if (controlMode == 0 && debugCamera) {
                 if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_Z, 2, 0))
@@ -1316,7 +1372,7 @@ public:
                 if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_Q, 2, 0))
                     PrevSavedCam(TheCamera.m_pCamFinal);
                 if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_E, 2, 0))
-					NextSavedCam(TheCamera.m_pCamFinal);
+                    NextSavedCam(TheCamera.m_pCamFinal);
             }
 
             auto playa = FindPlayerPed(0);
@@ -1330,14 +1386,24 @@ public:
                     vehicle->m_bInvincible = true;
                     vehicle->m_bCanBeVisiblyDamaged = false;
                     vehicle->SetHealth(1000.0f, 0);
-				}
+                }
             }
 
             if (infiniteAmmo) {
                 auto ammoData = playa->m_WeaponData.GetAmmoDataExtraCheck();
                 if (ammoData) {
-					ammoData->m_nAmmoInClip = CWeaponInfo::GetWeaponInfo(ammoData->m_nType)->m_nClipSize;
-                    ammoData->m_nAmmoTotal = 25000;
+                    ammoData->m_nAmmoTotal = 9999;
+                }
+            }
+
+            if (noReload) {
+                auto ammoData = playa->m_WeaponData.GetAmmoDataExtraCheck();
+                if (ammoData && ammoData->m_nAmmoInClip <= 1) {
+                    ammoData->m_nAmmoInClip = CWeaponInfo::GetWeaponInfo(ammoData->m_nType)->m_nClipSize;
+                    ammoData->m_nAmmoTotal -= ammoData->m_nAmmoInClip;
+
+                    if (ammoData->m_nAmmoTotal < 0)
+                        ammoData->m_nAmmoTotal = 0;
                 }
             }
 
@@ -1366,7 +1432,7 @@ public:
         onItemDefPeds += [](char* modelName) {
             pedNamesStrings.push_back(modelName);
         };
-    
+
         plugin::CdeclEvent <plugin::AddressList<0x9DA0CC, plugin::H_CALL>, plugin::PRIORITY_AFTER, plugin::ArgPickN<char*, 0>, CBaseModelInfo* (char*)> onItemDefWeap({ "E8 ? ? ? ? 8B F0 83 C4 20 8D 44 24 24" });
         onItemDefWeap += [](char* modelName) {
             weaponNamesStrings.push_back(modelName);
