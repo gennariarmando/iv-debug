@@ -32,6 +32,8 @@
 #include "CViewport.h"
 #include "CTxdStore.h"
 
+#include "Timer.h"
+
 #include "dxsdk/d3d9.h"
 
 
@@ -62,30 +64,21 @@ public:
     static inline int32_t debugMessageTimer = 0;
     static inline std::string debugMessage = {};
 
+    static inline plugin::Timer timer = {};
+
     static void SetDebugMessage(std::string const& str) {
         debugMessage.assign(str);
 
-        if (CTimer::m_UserPause)
-            debugMessageTimer = CTimer::GetTimeInMillisecondsPauseMode() + 1500;
-        else
-            debugMessageTimer = CTimer::GetTimeInMilliseconds() + 1500;
+        debugMessageTimer = timer.GetTimeInMilliseconds() + 1500;
     }
 
     static void DrawDebugMessage() {
         if (debugMessage.empty())
             return;
 
-        if (CTimer::m_UserPause) {
-            if (debugMessageTimer < CTimer::GetTimeInMillisecondsPauseMode()) {
-                debugMessage.clear();
-                return;
-            }
-        }
-        else {
-            if (debugMessageTimer < CTimer::GetTimeInMilliseconds()) {
-                debugMessage.clear();
-                return;
-            }
+        if (debugMessageTimer < timer.GetTimeInMilliseconds()) {
+            debugMessage.clear();
+            return;
         }
 
         float x = DebugMenuGetStringSize(debugMessage.c_str()) / 2;
