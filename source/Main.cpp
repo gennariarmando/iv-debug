@@ -54,6 +54,10 @@ public:
     static inline bool pedsIgnorePlayer = false;
     static inline bool vehicleGodMode = false;
     static inline bool neverWanted = false;
+    static inline bool freezeWeather = false;
+
+    static inline int32_t prevWeather = 0;
+	static inline int32_t currentWeather = 0;
 
     static inline int32_t controlMode = 0;
     static inline rage::Vector4 teleportPos = {};
@@ -522,6 +526,12 @@ public:
         auto e = DebugMenuAddInt8("Time & Weather", "Freeze Game", (int8_t*)&freezeTime, []() { CTimer::m_UserPause = false; }, 1, 0, 1, boolstr);
         DebugMenuEntrySetWrap(e, true);
 
+        e = DebugMenuAddVarBool8("Time & Weather", "Freeze Weather", (int8_t*)&freezeWeather, []() { 
+            prevWeather = CWeather::OldWeatherType;
+            currentWeather = CWeather::NewWeatherType;
+        });
+        DebugMenuEntrySetWrap(e, true);
+
         // Spawn | Ped
         e = DebugMenuAddInt32("Spawn|Ped", "Spawn Ped ID", &pedId, nullptr, 1, 0, pedNames.size() - 1, (const char**)pedNames.data());
         DebugMenuEntrySetWrap(e, true);
@@ -742,7 +752,10 @@ public:
             SetDebugMessage("Clothes cleaned");
         });
 
-        DebugMenuAddCmd("Player", "Clear Wanted Level", []() { FindPlayerPed(0)->m_pPlayerInfo->m_PlayerData.m_Wanted.m_WantedLevel = eWantedLevel::WANTED_CLEAN; SetDebugMessage("Wanted level clear"); });
+        DebugMenuAddCmd("Player", "Clear Wanted Level", []() { 
+            plugin::scripting::CallCommandById<void>(plugin::Commands::CLEAR_WANTED_LEVEL, 0);
+            SetDebugMessage("Wanted level clear"); 
+        });
         DebugMenuAddVarBool8("Player", "Never Wanted", &neverWanted, []() {
             if (neverWanted)
                 SetDebugMessage("Never Wanted: On");
@@ -1413,6 +1426,11 @@ public:
                 CTimer::m_UserPause = true;
             }
 
+            if (freezeWeather) {
+                CWeather::OldWeatherType = prevWeather;
+				CWeather::NewWeatherType = currentWeather;
+            }
+
             ProcessDebugCam();
         };
 
@@ -1430,5 +1448,6 @@ public:
         onItemDefWeap += [](char* modelName) {
             weaponNamesStrings.push_back(modelName);
         };
+
     }
 } debugIV;
