@@ -55,9 +55,14 @@ public:
     static inline bool vehicleGodMode = false;
     static inline bool neverWanted = false;
     static inline bool freezeWeather = false;
+    static inline bool freezeTimeOfDay = false;
 
     static inline int32_t prevWeather = 0;
 	static inline int32_t currentWeather = 0;
+
+	static inline int32_t freezeTimeHour = 0;
+	static inline int32_t freezeTimeMinutes = 0;
+    static inline int32_t freezeTimeSeconds = 0;
 
     static inline int32_t controlMode = 0;
     static inline rage::Vector4 teleportPos = {};
@@ -198,8 +203,11 @@ public:
     struct CameraSetting {
         rage::Vector3 pos;
         rage::Vector3 rot;
+        float fov;
         int hour, minute;
         int oldweather, newweather;
+        rage::Vector4 playerPos;
+		rage::Vector3 playerRot;
     };
 
     static inline CameraSetting savedCameras[100];
@@ -214,11 +222,14 @@ public:
             cs = savedCameras;
             numSavedCameras = 0;
             while (fgets(line, 256, f)) {
-                sscanf(line, "%f %f %f  %f %f %f  %d %d  %d %d",
+                sscanf(line, "%f %f %f  %f %f %f  %f  %d %d  %d %d %f %f %f %f %f %f",
                     &cs->pos.x, &cs->pos.y, &cs->pos.z,
                     &cs->rot.x, &cs->rot.y, &cs->rot.z,
+                    &cs->fov,
                     &cs->hour, &cs->minute,
-                    &cs->oldweather, &cs->newweather);
+                    &cs->oldweather, &cs->newweather,
+                       &cs->playerPos.x, &cs->playerPos.y, &cs->playerPos.z,
+                       &cs->playerRot.x, &cs->playerRot.y, &cs->playerRot.z);
                 cs++;
                 numSavedCameras++;
             }
@@ -245,11 +256,16 @@ public:
 
         FILE* f = fopen("campositions.txt", "a");
         if (f) {
-            fprintf(f, "%f %f %f  %f %f %f  %d %d  %d %d\n",
+            auto playa = FindPlayerPed(0);
+
+            fprintf(f, "%f %f %f  %f %f %f  %f  %d %d  %d %d %f %f %f\n",
                 cam->m_mMatrix.pos.x, cam->m_mMatrix.pos.y, cam->m_mMatrix.pos.z,
                 cam->m_mMatrix.GetRotation().x, cam->m_mMatrix.GetRotation().y, cam->m_mMatrix.GetRotation().z,
+                cam->m_fFOV,
                 CClock::ms_nGameClockHours, CClock::ms_nGameClockMinutes,
-                CWeather::OldWeatherType, CWeather::NewWeatherType);
+                CWeather::OldWeatherType, CWeather::NewWeatherType,
+                    playa->GetPosition().x, playa->GetPosition().y, playa->GetPosition().z,
+                    playa->m_pMatrix->GetRotation().x, playa->m_pMatrix->GetRotation().y, playa->m_pMatrix->GetRotation().z);
             fclose(f);
             LoadSavedCams();
             currentSavedCam = numSavedCameras - 1;
@@ -268,11 +284,20 @@ public:
         cam->m_mMatrix.pos = savedCameras[currentSavedCam].pos;
         cam->m_mMatrix.SetRotate(savedCameras[currentSavedCam].rot);
 
+		cam->m_fFOV = savedCameras[currentSavedCam].fov;
+		fov = cam->m_fFOV;
+
         CClock::ms_nGameClockHours = savedCameras[currentSavedCam].hour;
         CClock::ms_nGameClockMinutes = savedCameras[currentSavedCam].minute;
         CWeather::OldWeatherType = savedCameras[currentSavedCam].oldweather;
         CWeather::NewWeatherType = savedCameras[currentSavedCam].newweather;
         CWeather::InterpolationValue = CClock::ms_nGameClockMinutes / 60.0f;
+
+        auto playa = FindPlayerPed(0);
+
+        playa->Teleport(&savedCameras[currentSavedCam].playerPos, 0, 1);
+        playa->m_pMatrix->SetRotate(savedCameras[currentSavedCam].playerRot);
+        playa->Update(0);
     }
 
     static void NextSavedCam(CCam* cam) {
@@ -496,8 +521,12 @@ public:
                 "Extra Sunny 2",
                 "Sunny Windy 2",
         };
-        DebugMenuAddInt32("Time & Weather", "Old Weather", &CWeather::OldWeatherType, nullptr, 1, 0, 9, weathers);
-        DebugMenuAddInt32("Time & Weather", "New Weather", &CWeather::NewWeatherType, nullptr, 1, 0, 9, weathers);
+        DebugMenuAddInt32("Time & Weather", "Old Weather", &CWeather::OldWeatherType, []() {
+            prevWeather = CWeather::OldWeatherType;
+        }, 1, 0, 9, weathers);
+        DebugMenuAddInt32("Time & Weather", "New Weather", &CWeather::NewWeatherType, []() {
+			currentWeather = CWeather::NewWeatherType;
+        }, 1, 0, 9, weathers);
         DebugMenuAddFloat32("Time & Weather", "Time scale", &CTimer::ms_fTimeScale, nullptr, 0.1f, 0.0f, 10.0f);
 
         static float farDOF = 0.0f;
@@ -529,6 +558,13 @@ public:
         e = DebugMenuAddVarBool8("Time & Weather", "Freeze Weather", (int8_t*)&freezeWeather, []() { 
             prevWeather = CWeather::OldWeatherType;
             currentWeather = CWeather::NewWeatherType;
+        });
+        DebugMenuEntrySetWrap(e, true);
+
+        e = DebugMenuAddVarBool8("Time & Weather", "Freeze Time of Day", (int8_t*)&freezeTimeOfDay, []() {
+            freezeTimeHour = CClock::ms_nGameClockHours;
+            freezeTimeMinutes = CClock::ms_nGameClockMinutes;
+			freezeTimeSeconds = CClock::ms_nGameClockSeconds;
         });
         DebugMenuEntrySetWrap(e, true);
 
@@ -1004,7 +1040,7 @@ public:
     }
 
     static void ToggleDebugCam() {
-        if (plugin::scripting::CallCommandById<bool>(plugin::Commands::ARE_WIDESCREEN_BORDERS_ACTIVE))
+        if (CCutsceneMgr::IsRunning())
 			return;
 
         LoadSavedCams();
@@ -1024,6 +1060,7 @@ public:
                     c1->m_bActive = !debugCamera;
             }
         }
+        fov = cam->m_fFOV;
 
         if (debugCamera)
             SetDebugMessage("Debug camera: On");
@@ -1063,8 +1100,13 @@ public:
         bool shift = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_LSHIFT, 2, 0) || CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RSHIFT, 2, 0);
 
         bool enter = CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_RETURN, 2, 0);
-        bool up = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_UP, 2, 0);
-        bool down = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_DOWN, 2, 0);
+        bool up = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_Q, 2, 0);
+        bool down = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_E, 2, 0);
+        bool fovUp = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_UP, 2, 0);
+        bool fovDown = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_DOWN, 2, 0);
+        bool tiltLeft = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_LEFT, 2, 0);
+        bool tiltRight = CControlMgr::m_keyboard.GetKeyDown(eKeyCodes::KEY_RIGHT, 2, 0);
+
         bool lmb = CPad::IsMouseButtonPressed(1);
         int32_t mouseX = 0, mouseY = 0;
         CPad::GetMouseInput(&mouseX, &mouseY);
@@ -1087,7 +1129,7 @@ public:
         cam->m_bActive = true;
 
         rage::Matrix44 mat = cam->m_mMatrix;
-        rage::Vector3 rot = cam->m_mMatrix.GetRotation();
+        rage::Vector3 angle = cam->m_mMatrix.GetRotation();
 
         float dt = (CTimer::GetTimeInMilliseconds() - CTimer::GetPreviousTimeInMilliseconds()) / 1000.0f;
 
@@ -1100,8 +1142,6 @@ public:
         static float panspeedY = 0.0f;
 
         float rotationSpeed = 0.0005f;
-
-        rage::Vector3 angle = cam->m_mMatrix.GetRotation();
 
         float baseAccel = 30.0f;
         float maxSpeed = 50.0f;
@@ -1121,6 +1161,11 @@ public:
                 angle.z -= mouseX * rotationSpeed;
                 angle.x -= mouseY * rotationSpeed;
             }
+
+            if (tiltLeft)
+                angle.y -= 1.0f * dt;
+            else if (tiltRight)
+                angle.y += 1.0f * dt;
 
             if (forward) {
                 speed += baseAccel * dt;
@@ -1179,6 +1224,16 @@ public:
                 }
             }
         }
+
+        if (fovUp)
+            fov -= 1.0f;
+        else if (fovDown)
+			fov += 1.0f;
+
+        if (fov <= 5.0f)
+			fov = 5.0f;
+        if (fov > 100.0f)
+            fov = 100.0f;
 
         mat.SetRotate(angle);
 
@@ -1372,12 +1427,10 @@ public:
 
             if (controlMode == 0 && debugCamera) {
                 if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_Z, 2, 0))
-                    SaveCam(TheCamera.m_pCamFinal);
-                if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_X, 2, 0))
-                    DeleteSavedCams();
-                if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_Q, 2, 0))
                     PrevSavedCam(TheCamera.m_pCamFinal);
-                if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_E, 2, 0))
+                else if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_X, 2, 0))
+                    SaveCam(TheCamera.m_pCamFinal);
+                else if (CControlMgr::m_keyboard.GetKeyJustDown(eKeyCodes::KEY_C, 2, 0))
                     NextSavedCam(TheCamera.m_pCamFinal);
             }
 
@@ -1429,6 +1482,12 @@ public:
             if (freezeWeather) {
                 CWeather::OldWeatherType = prevWeather;
 				CWeather::NewWeatherType = currentWeather;
+            }
+
+            if (freezeTimeOfDay) {
+                CClock::ms_nGameClockHours = freezeTimeHour;
+                //CClock::ms_nGameClockMinutes = freezeTimeMinutes;
+				CClock::ms_nGameClockSeconds = freezeTimeSeconds;
             }
 
             ProcessDebugCam();
